@@ -6,6 +6,7 @@ import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.database.Cursor;
 import android.graphics.Color;
+import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
@@ -712,9 +713,20 @@ public class MainActivity extends AppCompatActivity {
         edit.setHint(hint);
         edit.setSingleLine(true);
         edit.setTextSize(13);
-        edit.setPadding(dp(12), 0, dp(12), 0);
+        edit.setTextColor(Color.rgb(24, 32, 31));
+        edit.setHintTextColor(Color.rgb(122, 132, 128));
+        edit.setPadding(dp(12), dp(8), dp(12), dp(8));
         edit.setMinHeight(dp(44));
+        edit.setBackground(inputBackground());
         return edit;
+    }
+
+    private GradientDrawable inputBackground() {
+        GradientDrawable drawable = new GradientDrawable();
+        drawable.setColor(Color.rgb(250, 248, 243));
+        drawable.setStroke(dp(1), Color.rgb(224, 220, 213));
+        drawable.setCornerRadius(dp(8));
+        return drawable;
     }
 
     private MaterialButton button(String text) {
