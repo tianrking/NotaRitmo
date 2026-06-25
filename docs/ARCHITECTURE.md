@@ -22,6 +22,8 @@ only.
     final recognition when the VAD model is available.
   - `SherpaSpeakerDiarizer` runs local speaker segmentation and clustering when
     diarization models are available.
+  - `SherpaVoiceprintExtractor` computes local speaker embeddings for
+    enrollment and identity matching.
   - `SherpaSenseVoiceRefiner` runs offline SenseVoice refinement after stop.
   - `SherpaPunctuationRestorer` restores punctuation on finalized local text.
   - `SherpaModelDownloader` prepares all local model families.
@@ -33,6 +35,10 @@ only.
 
 - `data`
   - `RecordingItem` and `TranscriptSegment` are the current UI/domain snapshot.
+
+- `voiceprint`
+  - `LocalVoiceprintStore` persists enrolled speaker embeddings on device and
+    performs local cosine-similarity matching.
 
 ## Runtime Flow
 
@@ -51,7 +57,9 @@ only.
 8. SenseVoice reads each speech segment, refines the final transcript locally,
    and exposes language, emotion, and event tags per segment.
 9. Offline punctuation restores sentence punctuation.
-10. LLM summarization can run against the final text only.
+10. Speaker embeddings are matched against enrolled local voiceprints when the
+    embedding model is present.
+11. LLM summarization can run against the final text only.
 
 ## Reliability Rules
 

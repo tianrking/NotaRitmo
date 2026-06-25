@@ -13,6 +13,7 @@ See `docs/ARCHITECTURE.md` for the module boundaries and runtime flow.
 - Silero VAD runs locally after stop to split captured speech before refinement.
 - sherpa-onnx speaker diarization runs locally when segmentation and embedding
   models are present.
+- Voiceprint enrollment and matching use the same local speaker embedding model.
 - SenseVoice runs locally after stop to refine the final transcript.
 - Offline punctuation restores commas and periods for the final transcript.
 - Local hotwords bias realtime ASR toward project names, people, and terms.
@@ -44,7 +45,9 @@ after stop. If speaker diarization models are present, the captured audio is
 split into speaker-aware segments. If they are missing but the VAD model is
 present, the captured audio is split into speech segments so silence is removed
 before SenseVoice runs. Offline punctuation restores sentence punctuation, and
-the refined timeline replaces the realtime transcript.
+the refined timeline replaces the realtime transcript. Enter a name and tap
+`Enroll voiceprint` to record a local sample; later refined segments are matched
+against enrolled voiceprints on device.
 
 The downloader tries Hugging Face first and then `hf-mirror.com` as a fallback
 for model repositories. Direct sherpa-onnx release assets, such as Silero VAD,
@@ -135,7 +138,5 @@ The current speaker diarization models are:
 ## Next algorithm slots
 
 - Offline file ASR: reuse the SenseVoice refiner for imported files.
-- Voiceprint enrollment: reuse the speaker embedding model and store local
-  enrolled identities.
 - TTS: add sherpa-onnx TTS or Android system TTS.
 - LLM: call SaaS/private OpenAI-compatible endpoint with finalized transcript text only.

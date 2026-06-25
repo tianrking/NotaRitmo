@@ -199,10 +199,11 @@ class SherpaRealtimeAsrEngine(
         samples: FloatArray,
         refiner: SherpaSenseVoiceRefiner,
     ): List<RefinedTranscriptSegment> {
+        val voiceprintExtractor = SherpaVoiceprintExtractor(context).takeIf { it.isModelReady() }
         val diarized = SherpaSpeakerDiarizer(context).diarize(samples)
         if (diarized.isNotEmpty()) {
             return diarized.mapNotNull { segment ->
-                refineSpeechSegment(segment, refiner)
+                refineSpeechSegment(segment, refiner, voiceprintExtractor)
             }
         }
 
@@ -224,6 +225,7 @@ class SherpaRealtimeAsrEngine(
                     lang = result.lang,
                     emotion = result.emotion,
                     event = result.event,
+                    embedding = voiceprintExtractor?.extract(segmentSamples, sampleRate) ?: FloatArray(0),
                 )
             }
         }
@@ -232,6 +234,7 @@ class SherpaRealtimeAsrEngine(
     private fun refineSpeechSegment(
         segment: DiarizedSpeechSegment,
         refiner: SherpaSenseVoiceRefiner,
+        voiceprintExtractor: SherpaVoiceprintExtractor?,
     ): RefinedTranscriptSegment? {
         val result = refiner.refine(segment.samples, sampleRate)
         if (result.text.isEmpty()) return null
@@ -243,6 +246,7 @@ class SherpaRealtimeAsrEngine(
             lang = result.lang,
             emotion = result.emotion,
             event = result.event,
+            embedding = voiceprintExtractor?.extract(segment.samples, sampleRate) ?: FloatArray(0),
         )
     }
 

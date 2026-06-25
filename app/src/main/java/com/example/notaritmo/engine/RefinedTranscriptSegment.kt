@@ -8,4 +8,5 @@ data class RefinedTranscriptSegment(
     val lang: String,
     val emotion: String,
     val event: String,
+    val embedding: FloatArray = FloatArray(0),
 )

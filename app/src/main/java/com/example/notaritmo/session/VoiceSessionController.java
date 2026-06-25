@@ -8,7 +8,10 @@ import com.example.notaritmo.engine.RealtimeAsrListener;
 import com.example.notaritmo.engine.RefinedTranscriptSegment;
 import com.example.notaritmo.engine.SherpaPunctuationRestorer;
 import com.example.notaritmo.engine.SherpaRealtimeAsrEngine;
+import com.example.notaritmo.voiceprint.LocalVoiceprintStore;
+import com.example.notaritmo.voiceprint.VoiceprintMatch;
 
+import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.UUID;
@@ -22,6 +25,7 @@ public class VoiceSessionController {
     private boolean running;
     private long startedAt;
     private String hotwords = "";
+    private String pendingEnrollmentName = "";
 
     public VoiceSessionController(Context context, VoiceSessionListener listener) {
         this.context = context.getApplicationContext();
@@ -56,6 +60,14 @@ public class VoiceSessionController {
 
     public void setHotwords(String hotwords) {
         this.hotwords = hotwords == null ? "" : hotwords;
+    }
+
+    public void enrollNextRecording(String name) {
+        pendingEnrollmentName = name == null ? "" : name.trim();
+    }
+
+    public int voiceprintCount() {
+        return new LocalVoiceprintStore(context).count();
     }
 
     private RealtimeAsrListener callbacks() {
@@ -128,6 +140,11 @@ public class VoiceSessionController {
             public void onRefinedSegments(List<RefinedTranscriptSegment> segments) {
                 if (currentItem == null || segments == null || segments.isEmpty()) return;
                 SherpaPunctuationRestorer punctuation = new SherpaPunctuationRestorer(context);
+                LocalVoiceprintStore voiceprints = new LocalVoiceprintStore(context);
+                RefinedTranscriptSegment enrollmentSegment = pickEnrollmentSegment(segments);
+                if (!pendingEnrollmentName.isEmpty() && enrollmentSegment != null) {
+                    voiceprints.save(pendingEnrollmentName, enrollmentSegment.getEmbedding());
+                }
                 currentItem.segments.clear();
                 String lang = "";
                 String emotion = "";
@@ -135,6 +152,10 @@ public class VoiceSessionController {
                 float endSeconds = 0f;
                 for (RefinedTranscriptSegment segment : segments) {
                     if (segment.getText().isEmpty()) continue;
+                    VoiceprintMatch match = voiceprints.search(segment.getEmbedding(), 0.58f);
+                    String speaker = match == null
+                            ? segment.getSpeaker()
+                            : match.getName() + " (" + segment.getSpeaker() + ")";
                     if (lang.isEmpty() && !segment.getLang().isEmpty()) lang = segment.getLang();
                     if (emotion.isEmpty() && !segment.getEmotion().isEmpty()) emotion = segment.getEmotion();
                     if (event.isEmpty() && !segment.getEvent().isEmpty()) event = segment.getEvent();
@@ -142,7 +163,7 @@ public class VoiceSessionController {
                     currentItem.segments.add(new TranscriptSegment(
                             formatDuration(segment.getStartSeconds()),
                             formatDuration(segment.getEndSeconds()),
-                            segment.getSpeaker(),
+                            speaker,
                             segment.getLang().isEmpty() ? "SenseVoice" : segment.getLang(),
                             segment.getEmotion().isEmpty() ? "Refined" : segment.getEmotion(),
                             segment.getEvent().isEmpty() ? "Speech" : segment.getEvent(),
@@ -153,7 +174,11 @@ public class VoiceSessionController {
                 if (currentItem.segments.isEmpty()) return;
                 currentItem.durationLabel = formatDuration(Math.max(endSeconds, elapsedSeconds()));
                 currentItem.status = "Refined";
-                currentItem.summary = "Final local diarized SenseVoice transcript with offline punctuation.\nLanguage: " + lang + "\nEmotion: " + emotion + "\nEvent: " + event;
+                String enrollmentLine = pendingEnrollmentName.isEmpty()
+                        ? ""
+                        : "\nVoiceprint enrolled: " + pendingEnrollmentName;
+                pendingEnrollmentName = "";
+                currentItem.summary = "Final local diarized SenseVoice transcript with offline punctuation.\nLanguage: " + lang + "\nEmotion: " + emotion + "\nEvent: " + event + enrollmentLine;
                 listener.onRefined(currentItem, lang, emotion, event);
             }
 
@@ -179,6 +204,13 @@ public class VoiceSessionController {
 
     private static boolean isBlank(String value) {
         return value == null || value.isEmpty();
+    }
+
+    private static RefinedTranscriptSegment pickEnrollmentSegment(List<RefinedTranscriptSegment> segments) {
+        return segments.stream()
+                .filter(segment -> segment.getEmbedding().length > 0)
+                .max(Comparator.comparingDouble(segment -> segment.getEndSeconds() - segment.getStartSeconds()))
+                .orElse(null);
     }
 
     private static String clockLabel() {

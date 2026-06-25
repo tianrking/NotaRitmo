@@ -73,6 +73,7 @@ public class MainActivity extends AppCompatActivity {
     private MaterialButton recordButton;
     private MaterialButton downloadModelButton;
     private EditText hotwordsInput;
+    private EditText voiceprintNameInput;
     private EditText llmBaseInput;
     private EditText llmModelInput;
     private EditText llmKeyInput;
@@ -193,6 +194,17 @@ public class MainActivity extends AppCompatActivity {
         hotwordsInput.setSingleLine(false);
         hotwordsInput.setMinLines(2);
         box.addView(hotwordsInput);
+        box.addView(space(10));
+
+        LinearLayout voiceprintRow = row();
+        voiceprintNameInput = input("Voiceprint name");
+        voiceprintNameInput.setText(getPrefs("voiceprint_name", "Speaker"));
+        voiceprintRow.addView(voiceprintNameInput, new LinearLayout.LayoutParams(0, dp(44), 1f));
+        voiceprintRow.addView(spaceHorizontal(10));
+        MaterialButton enrollVoiceprint = button("Enroll voiceprint");
+        enrollVoiceprint.setOnClickListener(v -> enrollVoiceprint());
+        voiceprintRow.addView(enrollVoiceprint, new LinearLayout.LayoutParams(0, dp(44), 1f));
+        box.addView(voiceprintRow);
         box.addView(space(10));
 
         progress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
@@ -358,6 +370,25 @@ public class MainActivity extends AppCompatActivity {
             voiceSession.stop();
             return;
         }
+        startLiveAsr(false);
+    }
+
+    private void enrollVoiceprint() {
+        String name = voiceprintNameInput.getText().toString().trim();
+        if (name.isEmpty()) {
+            Toast.makeText(this, "Fill a voiceprint name first.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        savePrefs("voiceprint_name", name);
+        voiceSession.enrollNextRecording(name);
+        if (realtimeAsrRunning) {
+            Toast.makeText(this, "Voiceprint will enroll when this recording stops.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        startLiveAsr(true);
+    }
+
+    private void startLiveAsr(boolean enrollingVoiceprint) {
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.RECORD_AUDIO}, REQ_AUDIO);
             return;
@@ -365,6 +396,9 @@ public class MainActivity extends AppCompatActivity {
         savePrefs("hotwords", hotwordsInput.getText().toString());
         voiceSession.setHotwords(formatHotwords(hotwordsInput.getText().toString()));
         voiceSession.start();
+        if (enrollingVoiceprint) {
+            statusText.setText("Recording voiceprint sample");
+        }
     }
 
     private VoiceSessionListener voiceSessionListener() {
