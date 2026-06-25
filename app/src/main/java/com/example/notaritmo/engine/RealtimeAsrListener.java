@@ -1,5 +1,7 @@
 package com.example.notaritmo.engine;
 
+import java.util.List;
+
 public interface RealtimeAsrListener {
     void onReady(String modelName);
 
@@ -11,6 +13,9 @@ public interface RealtimeAsrListener {
     }
 
     default void onRefined(String text, String lang, String emotion, String event) {
+    }
+
+    default void onRefinedSegments(List<RefinedTranscriptSegment> segments) {
     }
 
     default void onRefineSkipped(String message) {

@@ -20,6 +20,8 @@ only.
     Zipformer.
   - `SherpaVadSegmenter` removes silence and splits captured speech before
     final recognition when the VAD model is available.
+  - `SherpaSpeakerDiarizer` runs local speaker segmentation and clustering when
+    diarization models are available.
   - `SherpaSenseVoiceRefiner` runs offline SenseVoice refinement after stop.
   - `SherpaPunctuationRestorer` restores punctuation on finalized local text.
   - `SherpaModelDownloader` prepares all local model families.
@@ -36,16 +38,18 @@ only.
 
 1. User taps `Download ASR model`.
 2. The model downloader prepares Zipformer realtime files, SenseVoice refine
-   files, punctuation, and VAD models from packaged assets or online URLs.
+   files, punctuation, VAD, and speaker diarization models from packaged assets
+   or online URLs.
 3. User taps `Start live ASR`.
 4. `SherpaRealtimeAsrEngine` streams microphone PCM into Zipformer and writes
    the same PCM into a temporary cache file.
 5. Realtime segments are shown immediately.
 6. User stops recording.
-7. If the VAD model is present, captured PCM is split into speech segments.
-   Missing VAD falls back to whole-recording refinement.
-8. SenseVoice reads the speech segments, refines the final transcript locally,
-   and exposes language, emotion, and event tags.
+7. If speaker diarization models are present, captured PCM is split into
+   speaker-aware segments. Missing diarization falls back to VAD segments, and
+   missing VAD falls back to whole-recording refinement.
+8. SenseVoice reads each speech segment, refines the final transcript locally,
+   and exposes language, emotion, and event tags per segment.
 9. Offline punctuation restores sentence punctuation.
 10. LLM summarization can run against the final text only.
 

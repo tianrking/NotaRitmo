@@ -11,6 +11,8 @@ See `docs/ARCHITECTURE.md` for the module boundaries and runtime flow.
 - sherpa-onnx JNI libraries are packaged for `arm64-v8a`.
 - Streaming Zipformer runs locally through ONNX Runtime for low-latency text.
 - Silero VAD runs locally after stop to split captured speech before refinement.
+- sherpa-onnx speaker diarization runs locally when segmentation and embedding
+  models are present.
 - SenseVoice runs locally after stop to refine the final transcript.
 - Offline punctuation restores commas and periods for the final transcript.
 - Local hotwords bias realtime ASR toward project names, people, and terms.
@@ -21,8 +23,8 @@ See `docs/ARCHITECTURE.md` for the module boundaries and runtime flow.
 
 Normal users do not need `adb push`. Install the APK, open the app, and tap
 `Download ASR model`. The app downloads both the realtime Zipformer files and
-the SenseVoice refine files, the punctuation model, and the VAD model into its
-own external files directory:
+the SenseVoice refine files, the punctuation model, the VAD model, and the
+speaker diarization models into its own external files directory:
 
 `/sdcard/Android/data/com.example.notaritmo/files/models/sherpa-onnx-streaming-zipformer-zh-int8-2025-06-30/`
 
@@ -32,12 +34,17 @@ own external files directory:
 
 `/sdcard/Android/data/com.example.notaritmo/files/models/silero-vad/`
 
+`/sdcard/Android/data/com.example.notaritmo/files/models/sherpa-onnx-pyannote-segmentation-3-0/`
+
+`/sdcard/Android/data/com.example.notaritmo/files/models/speaker-embedding-models/`
+
 After the download finishes, `Start live ASR` works fully offline. Zipformer
 shows text immediately while speaking; SenseVoice re-decodes the captured audio
-after stop. If the VAD model is present, the captured audio is first split into
-speech segments so silence is removed before SenseVoice runs. Offline
-punctuation restores sentence punctuation, and the refined timeline replaces the
-realtime transcript.
+after stop. If speaker diarization models are present, the captured audio is
+split into speaker-aware segments. If they are missing but the VAD model is
+present, the captured audio is split into speech segments so silence is removed
+before SenseVoice runs. Offline punctuation restores sentence punctuation, and
+the refined timeline replaces the realtime transcript.
 
 The downloader tries Hugging Face first and then `hf-mirror.com` as a fallback
 for model repositories. Direct sherpa-onnx release assets, such as Silero VAD,
@@ -70,6 +77,10 @@ files under:
 `app/src/main/assets/models/sherpa-onnx-punct-ct-transformer-zh-en-vocab272727-2024-04-12/`
 
 `app/src/main/assets/models/silero-vad/`
+
+`app/src/main/assets/models/sherpa-onnx-pyannote-segmentation-3-0/`
+
+`app/src/main/assets/models/speaker-embedding-models/`
 
 When those assets exist, the app copies them into the same runtime model
 directory and does not hit the network. Add `noCompress += "onnx"` in Gradle for
@@ -111,9 +122,20 @@ Only this file is required on device:
 
 - `silero_vad.onnx`
 
+The current speaker diarization models are:
+
+`sherpa-onnx-pyannote-segmentation-3-0`
+
+- `model.int8.onnx`
+
+`speaker-embedding-models`
+
+- `3dspeaker_speech_eres2net_base_sv_zh-cn_3dspeaker_16k.onnx`
+
 ## Next algorithm slots
 
 - Offline file ASR: reuse the SenseVoice refiner for imported files.
-- Speaker diarization: add sherpa-onnx speaker diarization or CAM++ embedding.
+- Voiceprint enrollment: reuse the speaker embedding model and store local
+  enrolled identities.
 - TTS: add sherpa-onnx TTS or Android system TTS.
 - LLM: call SaaS/private OpenAI-compatible endpoint with finalized transcript text only.

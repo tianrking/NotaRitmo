@@ -5,9 +5,11 @@ import android.content.Context;
 import com.example.notaritmo.data.RecordingItem;
 import com.example.notaritmo.data.TranscriptSegment;
 import com.example.notaritmo.engine.RealtimeAsrListener;
+import com.example.notaritmo.engine.RefinedTranscriptSegment;
 import com.example.notaritmo.engine.SherpaPunctuationRestorer;
 import com.example.notaritmo.engine.SherpaRealtimeAsrEngine;
 
+import java.util.List;
 import java.util.Locale;
 import java.util.UUID;
 
@@ -123,6 +125,39 @@ public class VoiceSessionController {
             }
 
             @Override
+            public void onRefinedSegments(List<RefinedTranscriptSegment> segments) {
+                if (currentItem == null || segments == null || segments.isEmpty()) return;
+                SherpaPunctuationRestorer punctuation = new SherpaPunctuationRestorer(context);
+                currentItem.segments.clear();
+                String lang = "";
+                String emotion = "";
+                String event = "";
+                float endSeconds = 0f;
+                for (RefinedTranscriptSegment segment : segments) {
+                    if (segment.getText().isEmpty()) continue;
+                    if (lang.isEmpty() && !segment.getLang().isEmpty()) lang = segment.getLang();
+                    if (emotion.isEmpty() && !segment.getEmotion().isEmpty()) emotion = segment.getEmotion();
+                    if (event.isEmpty() && !segment.getEvent().isEmpty()) event = segment.getEvent();
+                    endSeconds = Math.max(endSeconds, segment.getEndSeconds());
+                    currentItem.segments.add(new TranscriptSegment(
+                            formatDuration(segment.getStartSeconds()),
+                            formatDuration(segment.getEndSeconds()),
+                            segment.getSpeaker(),
+                            segment.getLang().isEmpty() ? "SenseVoice" : segment.getLang(),
+                            segment.getEmotion().isEmpty() ? "Refined" : segment.getEmotion(),
+                            segment.getEvent().isEmpty() ? "Speech" : segment.getEvent(),
+                            punctuation.restore(segment.getText()),
+                            0.96f
+                    ));
+                }
+                if (currentItem.segments.isEmpty()) return;
+                currentItem.durationLabel = formatDuration(Math.max(endSeconds, elapsedSeconds()));
+                currentItem.status = "Refined";
+                currentItem.summary = "Final local diarized SenseVoice transcript with offline punctuation.\nLanguage: " + lang + "\nEmotion: " + emotion + "\nEvent: " + event;
+                listener.onRefined(currentItem, lang, emotion, event);
+            }
+
+            @Override
             public void onRefineSkipped(String message) {
                 listener.onRefineSkipped(message);
             }
@@ -155,5 +190,9 @@ public class VoiceSessionController {
         long min = seconds / 60L;
         long sec = seconds % 60L;
         return String.format(Locale.US, "%02d:%02d", min, sec);
+    }
+
+    public static String formatDuration(float seconds) {
+        return formatDuration(Math.max(0L, Math.round(seconds)));
     }
 }

@@ -138,6 +138,7 @@ public class MainActivity extends AppCompatActivity {
         addChip(row, "On-device ASR", true);
         addChip(row, "Realtime", true);
         addChip(row, "Refine", true);
+        addChip(row, "Diarization", true);
         addChip(row, "Emotion tag", true);
         addChip(row, "LLM SaaS", false);
         return scroller;
@@ -178,7 +179,7 @@ public class MainActivity extends AppCompatActivity {
         card.addView(box);
         box.addView(label("Voice pipeline", 18, Color.rgb(24, 32, 31), true));
         box.addView(space(8));
-        stageText = label("Zipformer realtime -> SenseVoice refine -> LLM text summary", 13, Color.rgb(74, 84, 81), false);
+        stageText = label("Zipformer realtime -> VAD/diarization -> SenseVoice refine -> punctuation", 13, Color.rgb(74, 84, 81), false);
         box.addView(stageText);
         box.addView(space(10));
 
@@ -414,7 +415,7 @@ public class MainActivity extends AppCompatActivity {
                     currentItem = item;
                     recordButton.setEnabled(true);
                     statusText.setText("SenseVoice refined transcript ready");
-                    stageText.setText("Realtime Zipformer + local SenseVoice refine complete");
+                    stageText.setText("Realtime Zipformer + local speaker-aware SenseVoice refine complete");
                     progress.setProgress(100);
                     renderCurrent();
                 });
@@ -436,7 +437,7 @@ public class MainActivity extends AppCompatActivity {
                     realtimeAsrRunning = false;
                     recordButton.setText("Start live ASR");
                     statusText.setText(hasTranscript ? "Realtime ASR stopped" : "Ready");
-                    stageText.setText("Zipformer realtime -> SenseVoice refine -> LLM text summary");
+                    stageText.setText("Zipformer realtime -> VAD/diarization -> SenseVoice refine -> punctuation");
                 });
             }
 

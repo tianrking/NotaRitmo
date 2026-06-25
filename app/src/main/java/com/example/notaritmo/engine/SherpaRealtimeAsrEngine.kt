@@ -182,17 +182,9 @@ class SherpaRealtimeAsrEngine(
                 listener.onRefineSkipped("No captured audio was available for SenseVoice refine.")
                 return
             }
-            val segments = SherpaVadSegmenter(context).split(samples)
-            val results = segments
-                .map { segment -> refiner.refine(segment, sampleRate) }
-                .filter { result -> result.text.isNotEmpty() }
-            if (results.isNotEmpty()) {
-                listener.onRefined(
-                    results.joinToString(" ") { result -> result.text },
-                    results.firstNonBlank { result -> result.lang },
-                    results.firstNonBlank { result -> result.emotion },
-                    results.firstNonBlank { result -> result.event },
-                )
+            val refinedSegments = refineSegments(samples, refiner)
+            if (refinedSegments.isNotEmpty()) {
+                listener.onRefinedSegments(refinedSegments)
             } else {
                 listener.onRefineSkipped("SenseVoice did not produce text for this recording.")
             }
@@ -203,8 +195,55 @@ class SherpaRealtimeAsrEngine(
         }
     }
 
-    private fun List<SenseVoiceRefineResult>.firstNonBlank(selector: (SenseVoiceRefineResult) -> String): String {
-        return firstNotNullOfOrNull { result -> selector(result).takeIf { it.isNotBlank() } }.orEmpty()
+    private fun refineSegments(
+        samples: FloatArray,
+        refiner: SherpaSenseVoiceRefiner,
+    ): List<RefinedTranscriptSegment> {
+        val diarized = SherpaSpeakerDiarizer(context).diarize(samples)
+        if (diarized.isNotEmpty()) {
+            return diarized.mapNotNull { segment ->
+                refineSpeechSegment(segment, refiner)
+            }
+        }
+
+        val vadSegments = SherpaVadSegmenter(context).split(samples)
+        var cursorSeconds = 0f
+        return vadSegments.mapNotNull { segmentSamples ->
+            val startSeconds = cursorSeconds
+            val endSeconds = startSeconds + segmentSamples.size.toFloat() / sampleRate
+            cursorSeconds = endSeconds
+            val result = refiner.refine(segmentSamples, sampleRate)
+            if (result.text.isEmpty()) {
+                null
+            } else {
+                RefinedTranscriptSegment(
+                    startSeconds = startSeconds,
+                    endSeconds = endSeconds,
+                    speaker = "Speaker 1",
+                    text = result.text,
+                    lang = result.lang,
+                    emotion = result.emotion,
+                    event = result.event,
+                )
+            }
+        }
+    }
+
+    private fun refineSpeechSegment(
+        segment: DiarizedSpeechSegment,
+        refiner: SherpaSenseVoiceRefiner,
+    ): RefinedTranscriptSegment? {
+        val result = refiner.refine(segment.samples, sampleRate)
+        if (result.text.isEmpty()) return null
+        return RefinedTranscriptSegment(
+            startSeconds = segment.startSeconds,
+            endSeconds = segment.endSeconds,
+            speaker = segment.speaker,
+            text = result.text,
+            lang = result.lang,
+            emotion = result.emotion,
+            event = result.event,
+        )
     }
 
     companion object {

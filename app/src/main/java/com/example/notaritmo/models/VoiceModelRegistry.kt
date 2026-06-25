@@ -4,6 +4,7 @@ import android.content.Context
 import com.example.notaritmo.engine.SherpaPunctuationRestorer
 import com.example.notaritmo.engine.SherpaRealtimeAsrEngine
 import com.example.notaritmo.engine.SherpaSenseVoiceRefiner
+import com.example.notaritmo.engine.SherpaSpeakerDiarizer
 import com.example.notaritmo.engine.SherpaVadSegmenter
 
 object VoiceModelRegistry {
@@ -45,6 +46,22 @@ object VoiceModelRegistry {
                     SherpaVadSegmenter.MODEL_FILE,
                 ),
                 directBaseUrl = SherpaVadSegmenter.MODEL_URL,
+            ),
+            VoiceModelBundle(
+                label = "Diarization segmentation",
+                repoName = SherpaSpeakerDiarizer.SEGMENTATION_MODEL_NAME,
+                modelDir = SherpaSpeakerDiarizer.segmentationDir(context),
+                files = listOf(
+                    SherpaSpeakerDiarizer.SEGMENTATION_FILE,
+                ),
+            ),
+            VoiceModelBundle(
+                label = "Speaker embedding",
+                repoName = SherpaSpeakerDiarizer.EMBEDDING_MODEL_NAME,
+                modelDir = SherpaSpeakerDiarizer.embeddingDir(context),
+                files = listOf(
+                    SherpaSpeakerDiarizer.EMBEDDING_FILE,
+                ),
             ),
         )
     }
