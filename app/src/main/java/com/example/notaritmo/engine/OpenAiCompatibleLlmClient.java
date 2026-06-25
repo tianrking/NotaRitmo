@@ -21,6 +21,28 @@ public class OpenAiCompatibleLlmClient {
     private static final String DEFAULT_OPENAI_BASE = "https://api.deepseek.com";
     private static final String DEFAULT_OPENAI_MODEL = "deepseek-chat";
     private static final String ANTHROPIC_VERSION = "2023-06-01";
+    private static final Set<String> GENERIC_KEYWORDS = new LinkedHashSet<String>() {{
+        add("today");
+        add("test");
+        add("issue");
+        add("problem");
+        add("thing");
+        add("things");
+        add("click");
+        add("normal");
+        add("can");
+        add("maybe");
+        add("今天");
+        add("测试");
+        add("问题");
+        add("东西");
+        add("点击");
+        add("正常");
+        add("可以");
+        add("现在");
+        add("感觉");
+        add("优化");
+    }};
 
     /** Summarize finalized local ASR text into meeting notes. */
     public String summarize(String apiBase, String apiKey, String model, String transcript) throws Exception {
@@ -92,13 +114,15 @@ public class OpenAiCompatibleLlmClient {
                 apiBase,
                 apiKey,
                 model,
-                "You extract summary hotwords from finalized meeting text. Use semantic word segmentation over the summary and transcript. "
-                        + "Prefer domain terms, product names, user-intent nouns, tasks, model names, and corrected ASR terms. "
-                        + "Return only a JSON array of strings. Do not invent facts. Keep Chinese keywords in Chinese, "
-                        + "preserve product names, merge duplicates, max 12 items.",
+                "You extract high-value summary hotwords from finalized meeting text. "
+                        + "Rank by importance and usefulness for later search. Prefer domain terms, product names, model names, "
+                        + "technical nouns, user tasks, corrected ASR terms, and repeated concepts. "
+                        + "Exclude generic filler words such as today, test, issue, thing, can, click, normal, problem. "
+                        + "Return only a JSON array of strings, max 12 items. Do not invent facts. Keep Chinese keywords in Chinese, "
+                        + "preserve canonical product names, merge synonyms and duplicates.",
                 "Local algorithm keyword candidates:\n" + localBlock
                         + "\n\nTranscript:\n" + transcript
-                        + "\n\nReturn only JSON, for example: [\"NotaRitmo\",\"SenseVoice\"]",
+                        + "\n\nReturn only JSON ordered by importance, for example: [\"NotaRitmo\",\"SenseVoice\",\"热词优化\"]",
                 800
         );
         return parseKeywords(raw, 12);
@@ -345,17 +369,45 @@ public class OpenAiCompatibleLlmClient {
             try {
                 JSONArray array = new JSONArray(cleaned.substring(start, end + 1));
                 for (int i = 0; i < array.length(); i++) {
-                    addKeyword(out, seen, array.optString(i, ""), maxKeywords);
+                    Object item = array.opt(i);
+                    if (item instanceof JSONObject) {
+                        JSONObject object = (JSONObject) item;
+                        addKeyword(out, seen, firstNonEmpty(
+                                object.optString("keyword", ""),
+                                object.optString("term", ""),
+                                object.optString("text", ""),
+                                object.optString("hotword", "")
+                        ), maxKeywords);
+                    } else {
+                        addKeyword(out, seen, array.optString(i, ""), maxKeywords);
+                    }
                 }
                 if (!out.isEmpty()) return out;
             } catch (Exception ignored) {
             }
         }
+        parseObjectKeywords(cleaned, out, seen, maxKeywords);
+        if (!out.isEmpty()) return out;
 
         for (String piece : cleaned.split("[,，;；\\n]")) {
             addKeyword(out, seen, piece, maxKeywords);
         }
         return out;
+    }
+
+    private static void parseObjectKeywords(String cleaned, List<String> out, Set<String> seen, int maxKeywords) {
+        java.util.regex.Matcher matcher = java.util.regex.Pattern
+                .compile("\\{([^{}]+)\\}")
+                .matcher(cleaned);
+        while (matcher.find() && out.size() < maxKeywords) {
+            String body = matcher.group(1);
+            addKeyword(out, seen, firstNonEmpty(
+                    extractStringField(body, "keyword"),
+                    extractStringField(body, "term"),
+                    extractStringField(body, "text"),
+                    extractStringField(body, "hotword")
+            ), maxKeywords);
+        }
     }
 
     private static Object parseJsonRoot(String cleaned) throws Exception {
@@ -402,6 +454,7 @@ public class OpenAiCompatibleLlmClient {
         if (out.size() >= maxKeywords) return;
         String keyword = raw == null ? "" : raw.trim()
                 .replaceAll("^[\\-\\*#\\d\\.\\)\\s]+", "")
+                .replaceAll("(?i)^(keyword|term|text|hotword)\\s*[:：]\\s*", "")
                 .replaceAll("[\"'`\\[\\]{}]+", "")
                 .replaceAll("\\s+", " ")
                 .trim();
@@ -411,6 +464,7 @@ public class OpenAiCompatibleLlmClient {
         }
         if (keyword.length() < 2 || keyword.length() > 32 || keyword.matches("\\d+")) return;
         String key = keyword.toLowerCase(Locale.US);
+        if (GENERIC_KEYWORDS.contains(key) || GENERIC_KEYWORDS.contains(keyword)) return;
         if (seen.add(key)) {
             out.add(keyword);
         }

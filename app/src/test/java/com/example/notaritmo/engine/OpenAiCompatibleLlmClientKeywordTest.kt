@@ -19,9 +19,26 @@ class OpenAiCompatibleLlmClientKeywordTest {
     }
 
     @Test
+    fun parsesObjectArrayAndFiltersGenericWords() {
+        val parsed = OpenAiCompatibleLlmClient.parseKeywords(
+            """
+            [
+              {"keyword":"热词优化","type":"task"},
+              {"term":"SenseVoice"},
+              {"keyword":"问题"},
+              {"text":"ASR 纠错"}
+            ]
+            """.trimIndent(),
+            8,
+        )
+
+        assertEquals(listOf("热词优化", "SenseVoice", "ASR 纠错"), parsed)
+    }
+
+    @Test
     fun parsesFallbackListAndDeduplicates() {
         val parsed = OpenAiCompatibleLlmClient.parseKeywords(
-            "1. NotaRitmo\n2. SenseVoice\n3. notarItmo\n4. 热词",
+            "1. NotaRitmo\n2. SenseVoice\n3. notarItmo\n4. 热词\n5. 测试",
             8,
         )
 
