@@ -1,149 +1,104 @@
-# NotaRitmo Android Voice Core
+# NotaRitmo Model And Runtime Notes
 
-This project now contains a real on-device two-layer ASR path based on sherpa-onnx.
+This file is the practical setup note for testing the Android app. The canonical
+overview lives in [README.md](README.md), and the architecture detail lives in
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
-See `docs/ARCHITECTURE.md` for the module boundaries and runtime flow.
-
-## What is real now
+## What Is Real In The App
 
 - Android native UI and microphone flow.
-- `AudioRecord` captures 16 kHz mono PCM.
-- Imported audio files are decoded locally with Android `MediaCodec` and then
-  transcribed offline.
-- sherpa-onnx JNI libraries are packaged for `arm64-v8a`.
-- Streaming Zipformer runs locally through ONNX Runtime for low-latency text.
-- Silero VAD runs locally after stop to split captured speech before refinement.
-- sherpa-onnx speaker diarization runs locally when segmentation and embedding
-  models are present.
-- Voiceprint matching uses the local speaker embedding model when enrolled
-  profiles exist.
-- SenseVoice runs locally after stop to refine the final transcript.
-- Offline punctuation restores commas and periods for the final transcript.
-- Hotword UI is intentionally hidden from the main resource panel until the
-  sherpa native hotword path is guarded safely.
-- SenseVoice language, emotion, and event tags are surfaced in the timeline.
-- LLM is intentionally external and not required for local ASR.
+- Local `AudioRecord` capture at 16 kHz mono PCM.
+- Local realtime Zipformer ASR through sherpa-onnx and ONNX Runtime.
+- Disk-backed PCM cache for long live recordings.
+- Local SenseVoice refinement after recording stops.
+- Local punctuation restoration.
+- Local VAD fallback and local speaker diarization when models are present.
+- Local speaker embedding and voiceprint matching engine.
+- SenseVoice language, emotion, and event tags in the timeline.
+- Imported audio file transcription through Android decode plus the same
+  offline pipeline.
+- Saved/imported audio library with re-transcribe, single-delete, and clear-all
+  controls.
+- Local keyword extraction, correction-highlight keywords, and optional LLM
+  summary hotwords.
+- Optional LLM correction and summary with text only.
 
-## Prepare the ASR model
+## Prepare Models In The App
 
-Normal users do not need `adb push`. Install the APK, open the app, and tap
-`Download ASR model`. The app downloads both the realtime Zipformer files and
-the SenseVoice refine files, the punctuation model, the VAD model, and the
-speaker diarization models into its own external files directory:
+Normal users should not need `adb push`.
 
-`/sdcard/Android/data/com.example.notaritmo/files/models/sherpa-onnx-streaming-zipformer-zh-int8-2025-06-30/`
+1. Install the APK.
+2. Open NotaRitmo.
+3. Tap `Download ASR model`.
+4. Wait until the model list shows `Found`.
 
-`/sdcard/Android/data/com.example.notaritmo/files/models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/`
+The app checks the runtime model directory first. If files already exist, it
+does not download them again. If assets are packaged in the APK, it copies them
+to the runtime directory. Otherwise it downloads missing model files.
 
-`/sdcard/Android/data/com.example.notaritmo/files/models/sherpa-onnx-punct-ct-transformer-zh-en-vocab272727-2024-04-12/`
+Runtime directory:
 
-`/sdcard/Android/data/com.example.notaritmo/files/models/silero-vad/`
+```text
+/sdcard/Android/data/com.example.notaritmo/files/models/
+```
 
-`/sdcard/Android/data/com.example.notaritmo/files/models/sherpa-onnx-pyannote-segmentation-3-0/`
+## Required Model Bundles
 
-`/sdcard/Android/data/com.example.notaritmo/files/models/speaker-embedding-models/`
+| Bundle | Required files |
+| --- | --- |
+| `sherpa-onnx-streaming-zipformer-zh-int8-2025-06-30` | `encoder.int8.onnx`, `decoder.onnx`, `joiner.int8.onnx`, `tokens.txt` |
+| `sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17` | `model.int8.onnx`, `tokens.txt` |
+| `sherpa-onnx-punct-ct-transformer-zh-en-vocab272727-2024-04-12` | `model.onnx` |
+| `silero-vad` | `silero_vad.onnx` |
+| `sherpa-onnx-pyannote-segmentation-3-0` | `model.int8.onnx` |
+| `3dspeaker_speech_eres2net_base_sv_zh-cn_3dspeaker_16k` | `3dspeaker_speech_eres2net_base_sv_zh-cn_3dspeaker_16k.onnx` |
 
-After the download finishes, `Start live ASR` works fully offline. Zipformer
-shows text immediately while speaking; SenseVoice re-decodes the captured audio
-after stop. If speaker diarization models are present, the captured audio is
-split into speaker-aware segments. If they are missing but the VAD model is
-present, the captured audio is split into speech segments so silence is removed
-before SenseVoice runs. Offline punctuation restores sentence punctuation, and
-the refined timeline replaces the realtime transcript. Voiceprint matching is
-kept in the engine layer, but enrollment UI is intentionally not shown in the
-main resource panel.
+## Packaged Model Option
 
-Imported audio files use the same local refine pipeline after Android decodes
-them to 16 kHz mono PCM. Supported file formats depend on the device codec
-stack, so WAV/M4A/MP3 support follows the Android system decoder.
+Put model files under:
 
-The downloader tries Hugging Face first and then `hf-mirror.com` as a fallback
-for model repositories. Direct sherpa-onnx release assets, such as Silero VAD,
-use the upstream release URL.
+```text
+app/src/main/assets/models/<model-name>/
+```
 
-## Developer-only model setup
+Then `Download ASR model` installs those assets locally without network access.
+For a production build, configure Gradle to avoid compressing ONNX files. The
+tradeoff is APK size: bundling all speech models can add hundreds of megabytes.
 
-From the project root on Windows:
+## Manual Developer Setup
+
+From the project root:
 
 ```powershell
 .\tools\download-sherpa-zipformer-zh.ps1
 ```
 
-You can still prepare the model manually while developing:
+Manual device push is still possible while developing:
 
 ```powershell
 adb install -r .\app\build\outputs\apk\debug\app-debug.apk
 adb push .\models\sherpa-onnx-streaming-zipformer-zh-int8-2025-06-30 /sdcard/Android/data/com.example.notaritmo/files/models/
 ```
 
-## Packaging the model into the APK
+## LLM Testing
 
-This is also supported by the same `Download ASR model` button. Put the model
-files under:
+LLM is optional. The app can use Anthropic-compatible messages endpoints or
+OpenAI-compatible chat endpoints. Only text is sent.
 
-`app/src/main/assets/models/sherpa-onnx-streaming-zipformer-zh-int8-2025-06-30/`
+Expected test order:
 
-`app/src/main/assets/models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/`
+1. Produce or import a transcript.
+2. Tap `1. Correct transcript with LLM`.
+3. Review red correction chips and segment correction labels.
+4. Tap `2. Summarize + extract hotwords`.
+5. Review yellow summary hotword chips.
 
-`app/src/main/assets/models/sherpa-onnx-punct-ct-transformer-zh-en-vocab272727-2024-04-12/`
+## Verification Commands
 
-`app/src/main/assets/models/silero-vad/`
-
-`app/src/main/assets/models/sherpa-onnx-pyannote-segmentation-3-0/`
-
-`app/src/main/assets/models/speaker-embedding-models/`
-
-When those assets exist, the app copies them into the same runtime model
-directory and does not hit the network. Add `noCompress += "onnx"` in Gradle for
-a production packaged build. The tradeoff is APK size: the current native-debug
-APK is about 42 MB, while bundling all offline speech models can add hundreds of
-MB depending on which bundles are included.
-
-## Model
-
-The current real-time model is:
-
-`sherpa-onnx-streaming-zipformer-zh-int8-2025-06-30`
-
-This is a higher-accuracy realtime Chinese model. It gives up bilingual
-Chinese/English coverage from the earlier Paraformer model, but it should be
-more stable for Mandarin dictation and meeting notes.
-
-Only these files are required on device:
-
-- `encoder.int8.onnx`
-- `decoder.onnx`
-- `joiner.int8.onnx`
-- `tokens.txt`
-
-The current refine model is:
-
-`sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17`
-
-Only these files are required on device:
-
-- `model.int8.onnx`
-- `tokens.txt`
-
-The current VAD model is:
-
-`silero-vad`
-
-Only this file is required on device:
-
-- `silero_vad.onnx`
-
-The current speaker diarization models are:
-
-`sherpa-onnx-pyannote-segmentation-3-0`
-
-- `model.int8.onnx`
-
-`speaker-embedding-models`
-
-- `3dspeaker_speech_eres2net_base_sv_zh-cn_3dspeaker_16k.onnx`
-
-## Next algorithm slots
-
-- TTS: add sherpa-onnx TTS or Android system TTS.
-- LLM: call SaaS/private OpenAI-compatible endpoint with finalized transcript text only.
+```powershell
+.\gradlew.bat :app:testDebugUnitTest --no-configuration-cache
+.\gradlew.bat :app:assembleDebug --no-configuration-cache
+.\gradlew.bat :app:installDebug --no-configuration-cache
+adb shell monkey -p com.example.notaritmo 1
+adb logcat -d -t 300 | Select-String -Pattern "com.example.notaritmo|FATAL EXCEPTION|AndroidRuntime" -Context 0,2
+```
