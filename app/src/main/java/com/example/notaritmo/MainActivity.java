@@ -582,7 +582,10 @@ public class MainActivity extends AppCompatActivity {
 
         timeline.removeAllViews();
         if (currentItem.segments.isEmpty()) {
-            timeline.addView(label("No transcript yet.", 14, Color.rgb(92, 101, 98), false));
+            String emptyText = "No speech".equals(currentItem.status)
+                    ? "No clear speech detected."
+                    : "No transcript yet.";
+            timeline.addView(label(emptyText, 14, Color.rgb(92, 101, 98), false));
         } else {
             for (TranscriptSegment segment : currentItem.segments) {
                 timeline.addView(segmentView(segment));
@@ -603,11 +606,11 @@ public class MainActivity extends AppCompatActivity {
         top.addView(label(segment.startLabel + " - " + segment.endLabel, 12, Color.rgb(91, 100, 97), true), new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
         top.addView(label(Math.round(segment.confidence * 100) + "%", 12, Color.rgb(39, 91, 88), true));
         box.addView(top);
-        String meta = segment.speaker + " / " + readableTag(segment.role, "SenseVoice");
+        String meta = segment.speaker + " / " + fallback(segment.role, "SenseVoice");
         box.addView(label(meta, 13, Color.rgb(145, 100, 45), true));
         box.addView(label(
-                "Emotion: " + readableTag(segment.emotion, "unknown")
-                        + "   Event: " + readableTag(segment.event, "speech"),
+                "Emotion: " + fallback(segment.emotion, "Neutral")
+                        + "   Event: " + fallback(segment.event, "Speech"),
                 12,
                 Color.rgb(91, 100, 97),
                 false
@@ -744,13 +747,10 @@ public class MainActivity extends AppCompatActivity {
         return dot > 0 ? name.substring(0, dot) : name;
     }
 
-    private String readableTag(String value, String fallback) {
+    private String fallback(String value, String fallback) {
         if (value == null || value.trim().isEmpty()) return fallback;
-        String cleaned = value.replaceAll("[<>|]", "").trim();
-        if (cleaned.startsWith("EMO_")) {
-            cleaned = cleaned.substring(4).toLowerCase(Locale.US);
-        }
-        return cleaned.isEmpty() ? fallback : cleaned;
+        String trimmed = value.trim();
+        return trimmed.isEmpty() ? fallback : trimmed;
     }
 
     private String formatBytes(long bytes) {

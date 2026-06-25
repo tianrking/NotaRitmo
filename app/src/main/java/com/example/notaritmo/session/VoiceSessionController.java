@@ -7,8 +7,10 @@ import com.example.notaritmo.data.TranscriptSegment;
 import com.example.notaritmo.engine.LocalTermNormalizer;
 import com.example.notaritmo.engine.RealtimeAsrListener;
 import com.example.notaritmo.engine.RefinedTranscriptSegment;
+import com.example.notaritmo.engine.SenseVoiceTags;
 import com.example.notaritmo.engine.SherpaPunctuationRestorer;
 import com.example.notaritmo.engine.SherpaRealtimeAsrEngine;
+import com.example.notaritmo.engine.TranscriptText;
 import com.example.notaritmo.voiceprint.LocalVoiceprintStore;
 import com.example.notaritmo.voiceprint.VoiceprintMatch;
 
@@ -120,22 +122,37 @@ public class VoiceSessionController {
             public void onRefined(String text, String lang, String emotion, String event) {
                 if (currentItem == null) return;
                 long elapsed = Math.max(1L, elapsedSeconds());
-                String finalText = new SherpaPunctuationRestorer(context).restore(termNormalizer.normalize(text));
+                String finalText = TranscriptText.polish(
+                        new SherpaPunctuationRestorer(context).restore(termNormalizer.normalize(text))
+                );
+                String displayLang = SenseVoiceTags.language(lang);
+                String displayEmotion = SenseVoiceTags.emotion(emotion);
+                String displayEvent = SenseVoiceTags.event(event);
                 currentItem.segments.clear();
+                if (!TranscriptText.hasMeaningfulSpeech(finalText)) {
+                    currentItem.durationLabel = formatDuration(elapsed);
+                    currentItem.status = "No speech";
+                    currentItem.summary = "No clear speech was detected in this recording. The local models are ready; try speaking closer to the microphone or importing a cleaner audio file.";
+                    listener.onRefined(currentItem, displayLang, displayEmotion, displayEvent);
+                    return;
+                }
                 currentItem.segments.add(new TranscriptSegment(
                         "00:00",
                         formatDuration(elapsed),
                         "Speaker 1",
-                        isBlank(lang) ? "SenseVoice" : lang,
-                        isBlank(emotion) ? "Refined" : emotion,
-                        isBlank(event) ? "Speech" : event,
+                        displayLang,
+                        displayEmotion,
+                        displayEvent,
                         finalText,
                         0.96f
                 ));
                 currentItem.durationLabel = formatDuration(elapsed);
                 currentItem.status = "Refined";
-                currentItem.summary = "Final local SenseVoice transcript with offline punctuation.\nLanguage: " + lang + "\nEmotion: " + emotion + "\nEvent: " + event;
-                listener.onRefined(currentItem, lang, emotion, event);
+                currentItem.summary = "Final local SenseVoice transcript with offline punctuation and term normalization."
+                        + "\nLanguage: " + displayLang
+                        + "\nEmotion: " + displayEmotion
+                        + "\nEvent: " + displayEvent;
+                listener.onRefined(currentItem, displayLang, displayEmotion, displayEvent);
             }
 
             @Override
@@ -162,26 +179,43 @@ public class VoiceSessionController {
                     if (emotion.isEmpty() && !segment.getEmotion().isEmpty()) emotion = segment.getEmotion();
                     if (event.isEmpty() && !segment.getEvent().isEmpty()) event = segment.getEvent();
                     endSeconds = Math.max(endSeconds, segment.getEndSeconds());
+                    String finalText = TranscriptText.polish(
+                            punctuation.restore(termNormalizer.normalize(segment.getText()))
+                    );
+                    if (!TranscriptText.hasMeaningfulSpeech(finalText)) continue;
                     currentItem.segments.add(new TranscriptSegment(
                             formatDuration(segment.getStartSeconds()),
                             formatDuration(segment.getEndSeconds()),
                             speaker,
-                            segment.getLang().isEmpty() ? "SenseVoice" : segment.getLang(),
-                            segment.getEmotion().isEmpty() ? "Refined" : segment.getEmotion(),
-                            segment.getEvent().isEmpty() ? "Speech" : segment.getEvent(),
-                            punctuation.restore(termNormalizer.normalize(segment.getText())),
+                            SenseVoiceTags.language(segment.getLang()),
+                            SenseVoiceTags.emotion(segment.getEmotion()),
+                            SenseVoiceTags.event(segment.getEvent()),
+                            finalText,
                             0.96f
                     ));
                 }
-                if (currentItem.segments.isEmpty()) return;
                 currentItem.durationLabel = formatDuration(Math.max(endSeconds, elapsedSeconds()));
+                String displayLang = SenseVoiceTags.language(lang);
+                String displayEmotion = SenseVoiceTags.emotion(emotion);
+                String displayEvent = SenseVoiceTags.event(event);
+                if (currentItem.segments.isEmpty()) {
+                    pendingEnrollmentName = "";
+                    currentItem.status = "No speech";
+                    currentItem.summary = "No clear speech was detected in this recording. The local models are ready; try speaking closer to the microphone or importing a cleaner audio file.";
+                    listener.onRefined(currentItem, displayLang, displayEmotion, displayEvent);
+                    return;
+                }
                 currentItem.status = "Refined";
                 String enrollmentLine = pendingEnrollmentName.isEmpty()
                         ? ""
                         : "\nVoiceprint enrolled: " + pendingEnrollmentName;
                 pendingEnrollmentName = "";
-                currentItem.summary = "Final local diarized SenseVoice transcript with offline punctuation.\nLanguage: " + lang + "\nEmotion: " + emotion + "\nEvent: " + event + enrollmentLine;
-                listener.onRefined(currentItem, lang, emotion, event);
+                currentItem.summary = "Final local diarized SenseVoice transcript with offline punctuation and term normalization."
+                        + "\nLanguage: " + displayLang
+                        + "\nEmotion: " + displayEmotion
+                        + "\nEvent: " + displayEvent
+                        + enrollmentLine;
+                listener.onRefined(currentItem, displayLang, displayEmotion, displayEvent);
             }
 
             @Override
@@ -202,10 +236,6 @@ public class VoiceSessionController {
                 listener.onError(message);
             }
         };
-    }
-
-    private static boolean isBlank(String value) {
-        return value == null || value.isEmpty();
     }
 
     private static RefinedTranscriptSegment pickEnrollmentSegment(List<RefinedTranscriptSegment> segments) {

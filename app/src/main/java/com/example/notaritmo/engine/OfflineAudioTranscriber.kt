@@ -31,25 +31,33 @@ class OfflineAudioTranscriber(
         val punctuation = SherpaPunctuationRestorer(context)
         val voiceprints = LocalVoiceprintStore(context)
         val terms = LocalTermNormalizer()
-        val segments = refined.map { segment ->
-            val match = voiceprints.search(segment.embedding, 0.58f)
-            TranscriptSegment(
-                VoiceSessionController.formatDuration(segment.startSeconds),
-                VoiceSessionController.formatDuration(segment.endSeconds),
-                if (match == null) segment.speaker else "${match.name} (${segment.speaker})",
-                segment.lang.ifEmpty { "SenseVoice" },
-                segment.emotion.ifEmpty { "Refined" },
-                segment.event.ifEmpty { "Speech" },
-                punctuation.restore(terms.normalize(segment.text)),
-                0.95f,
-            )
+        val segments = refined.mapNotNull { segment ->
+            val finalText = TranscriptText.polish(punctuation.restore(terms.normalize(segment.text)))
+            if (!TranscriptText.hasMeaningfulSpeech(finalText)) {
+                null
+            } else {
+                val match = voiceprints.search(segment.embedding, 0.58f)
+                TranscriptSegment(
+                    VoiceSessionController.formatDuration(segment.startSeconds),
+                    VoiceSessionController.formatDuration(segment.endSeconds),
+                    if (match == null) segment.speaker else "${match.name} (${segment.speaker})",
+                    SenseVoiceTags.language(segment.lang),
+                    SenseVoiceTags.emotion(segment.emotion),
+                    SenseVoiceTags.event(segment.event),
+                    finalText,
+                    0.95f,
+                )
+            }
+        }
+        if (segments.isEmpty()) {
+            throw IllegalStateException("SenseVoice did not produce meaningful speech")
         }
 
         val duration = VoiceSessionController.formatDuration(samples.size.toFloat() / sampleRate)
         return OfflineTranscriptionResult(
             segments = segments,
             durationLabel = duration,
-            summary = "Imported audio transcribed fully offline with local SenseVoice, punctuation, speaker labels, and voiceprint matching.",
+            summary = "Imported audio transcribed fully offline with local SenseVoice, punctuation, term normalization, speaker labels, emotion/event tags, and voiceprint matching.",
         )
     }
 
