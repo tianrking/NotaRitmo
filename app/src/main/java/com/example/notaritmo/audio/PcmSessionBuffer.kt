@@ -4,11 +4,13 @@ import android.content.Context
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
 import java.io.DataInputStream
+import java.io.DataOutputStream
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
 
 class PcmSessionBuffer(context: Context) {
+    private val appContext = context.applicationContext
     private val dir = File(context.cacheDir, "pcm")
     private val file = File(dir, "voice_${System.currentTimeMillis()}.pcm16")
     private var output: BufferedOutputStream? = null
@@ -61,8 +63,56 @@ class PcmSessionBuffer(context: Context) {
         return samples
     }
 
+    fun exportWav(samples: FloatArray, title: String = "live_recording", sampleRate: Int = 16000): File {
+        val outDir = appContext.getExternalFilesDir("recordings") ?: File(appContext.filesDir, "recordings")
+        if (!outDir.exists() && !outDir.mkdirs()) {
+            throw IllegalStateException("Cannot create recordings directory: ${outDir.absolutePath}")
+        }
+        val safeTitle = title
+            .replace(Regex("[^A-Za-z0-9._-]+"), "_")
+            .trim('_')
+            .ifEmpty { "live_recording" }
+        val wav = File(outDir, "${System.currentTimeMillis()}_$safeTitle.wav")
+        DataOutputStream(BufferedOutputStream(FileOutputStream(wav))).use { out ->
+            writeAscii(out, "RIFF")
+            writeIntLE(out, 36 + samples.size * 2)
+            writeAscii(out, "WAVE")
+            writeAscii(out, "fmt ")
+            writeIntLE(out, 16)
+            writeShortLE(out, 1)
+            writeShortLE(out, 1)
+            writeIntLE(out, sampleRate)
+            writeIntLE(out, sampleRate * 2)
+            writeShortLE(out, 2)
+            writeShortLE(out, 16)
+            writeAscii(out, "data")
+            writeIntLE(out, samples.size * 2)
+            samples.forEach { sample ->
+                val value = (sample.coerceIn(-1f, 1f) * 32767f).toInt().toShort()
+                writeShortLE(out, value.toInt())
+            }
+        }
+        return wav
+    }
+
     fun delete() {
         close()
         if (file.exists()) file.delete()
+    }
+
+    private fun writeAscii(out: DataOutputStream, text: String) {
+        out.write(text.toByteArray(Charsets.US_ASCII))
+    }
+
+    private fun writeIntLE(out: DataOutputStream, value: Int) {
+        out.writeByte(value and 0xff)
+        out.writeByte((value ushr 8) and 0xff)
+        out.writeByte((value ushr 16) and 0xff)
+        out.writeByte((value ushr 24) and 0xff)
+    }
+
+    private fun writeShortLE(out: DataOutputStream, value: Int) {
+        out.writeByte(value and 0xff)
+        out.writeByte((value ushr 8) and 0xff)
     }
 }

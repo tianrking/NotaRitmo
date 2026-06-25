@@ -175,22 +175,27 @@ class SherpaRealtimeAsrEngine(
     }
 
     private fun refineIfPossible(buffer: PcmSessionBuffer) {
-        val refiner = SherpaSenseVoiceRefiner(context)
-        if (!refiner.isModelReady()) {
-            buffer.delete()
-            listener.onRefineSkipped(
-                "SenseVoice refine model is missing. Tap Download ASR model to prepare both realtime and refine models."
-            )
-            return
-        }
-
         try {
-            listener.onRefining(SherpaSenseVoiceRefiner.MODEL_NAME)
             val samples = buffer.readFloats()
             if (samples.isEmpty()) {
                 listener.onRefineSkipped("No captured audio was available for SenseVoice refine.")
                 return
             }
+            try {
+                listener.onAudioSaved(buffer.exportWav(samples, "live_asr", sampleRate))
+            } catch (t: Throwable) {
+                listener.onRefineSkipped("Audio captured, but WAV save failed: ${t.message ?: t.javaClass.simpleName}")
+            }
+
+            val refiner = SherpaSenseVoiceRefiner(context)
+            if (!refiner.isModelReady()) {
+                listener.onRefineSkipped(
+                    "SenseVoice refine model is missing. Tap Download ASR model to prepare both realtime and refine models."
+                )
+                return
+            }
+
+            listener.onRefining(SherpaSenseVoiceRefiner.MODEL_NAME)
             val refinedSegments = refineSegments(samples, refiner)
             if (refinedSegments.isNotEmpty()) {
                 listener.onRefinedSegments(refinedSegments)

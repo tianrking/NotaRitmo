@@ -1,5 +1,6 @@
 package com.example.notaritmo.engine;
 
+import java.io.File;
 import java.util.List;
 
 public interface RealtimeAsrListener {
@@ -19,6 +20,9 @@ public interface RealtimeAsrListener {
     }
 
     default void onRefineSkipped(String message) {
+    }
+
+    default void onAudioSaved(File audioFile) {
     }
 
     void onStopped();

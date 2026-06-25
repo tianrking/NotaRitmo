@@ -14,6 +14,7 @@ import com.example.notaritmo.engine.TranscriptText;
 import com.example.notaritmo.voiceprint.LocalVoiceprintStore;
 import com.example.notaritmo.voiceprint.VoiceprintMatch;
 
+import java.io.File;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
@@ -229,6 +230,13 @@ public class VoiceSessionController {
             @Override
             public void onRefineSkipped(String message) {
                 listener.onRefineSkipped(message);
+            }
+
+            @Override
+            public void onAudioSaved(File audioFile) {
+                if (currentItem == null || audioFile == null) return;
+                currentItem.audioFile = audioFile;
+                listener.onRealtimeSegment(currentItem);
             }
 
             @Override

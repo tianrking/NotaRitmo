@@ -76,6 +76,7 @@ public class MainActivity extends AppCompatActivity {
     private VoiceSessionController voiceSession;
     private SherpaModelDownloader modelDownloader;
     private RecordingItem currentItem;
+    private final List<RecordingItem> libraryItems = new ArrayList<>();
 
     private LinearLayout timeline;
     private LinearLayout library;
@@ -113,6 +114,7 @@ public class MainActivity extends AppCompatActivity {
         voiceSession = new VoiceSessionController(getApplicationContext(), voiceSessionListener());
         setContentView(buildContent());
         seedInitialSession();
+        loadSavedAudioLibrary();
         renderCurrent();
         refreshModelStatus();
         clearInputFocusAndHideKeyboard();
@@ -424,6 +426,7 @@ public class MainActivity extends AppCompatActivity {
                 runOnUiThread(() -> {
                     realtimeAsrRunning = true;
                     currentItem = item;
+                    upsertLibraryItem(item);
                     recordButton.setText("Stop live ASR");
                     statusText.setText("Running " + modelName);
                     progress.setProgress(48);
@@ -447,6 +450,7 @@ public class MainActivity extends AppCompatActivity {
             public void onRealtimeSegment(RecordingItem item) {
                 runOnUiThread(() -> {
                     currentItem = item;
+                    upsertLibraryItem(item);
                     renderCurrent();
                 });
             }
@@ -465,6 +469,7 @@ public class MainActivity extends AppCompatActivity {
             public void onRefined(RecordingItem item, String lang, String emotion, String event) {
                 runOnUiThread(() -> {
                     currentItem = item;
+                    upsertLibraryItem(item);
                     recordButton.setEnabled(true);
                     statusText.setText("SenseVoice refined transcript ready");
                     stageText.setText("Realtime Zipformer + local speaker-aware SenseVoice refine complete");
@@ -477,9 +482,11 @@ public class MainActivity extends AppCompatActivity {
             public void onRefineSkipped(String message) {
                 runOnUiThread(() -> {
                     recordButton.setEnabled(true);
+                    if (currentItem != null) upsertLibraryItem(currentItem);
                     statusText.setText("Realtime ASR stopped");
                     stageText.setText("SenseVoice refine skipped");
                     summaryText.setText((currentItem != null ? currentItem.summary : "") + "\n\nRefine skipped: " + message);
+                    renderCurrent();
                 });
             }
 
@@ -489,6 +496,10 @@ public class MainActivity extends AppCompatActivity {
                     realtimeAsrRunning = false;
                     recordButton.setText("Start live ASR");
                     statusText.setText(hasTranscript ? "Realtime ASR stopped" : "Ready");
+                    if (currentItem != null) {
+                        upsertLibraryItem(currentItem);
+                        renderCurrent();
+                    }
                 });
             }
 
@@ -765,6 +776,46 @@ public class MainActivity extends AppCompatActivity {
                 0.92f
         ));
         currentItem.summary = "Architecture: realtime Zipformer for low latency, local SenseVoice for final accuracy, SaaS LLM only for text summary.";
+        upsertLibraryItem(currentItem);
+    }
+
+    private void loadSavedAudioLibrary() {
+        scanAudioDir(new File(getFilesDir(), "imports"), "Imported audio");
+        File recordings = getExternalFilesDir("recordings");
+        if (recordings == null) {
+            recordings = new File(getFilesDir(), "recordings");
+        }
+        scanAudioDir(recordings, "Live recording");
+    }
+
+    private void scanAudioDir(File dir, String status) {
+        File[] files = dir == null ? null : dir.listFiles();
+        if (files == null) return;
+        java.util.Arrays.sort(files, (a, b) -> Long.compare(b.lastModified(), a.lastModified()));
+        int count = 0;
+        for (File file : files) {
+            if (count >= 30) break;
+            if (!file.isFile() || !isSupportedAudioFile(file)) continue;
+            RecordingItem item = new RecordingItem("file:" + file.getAbsolutePath(), stripTimestamp(stripExt(file.getName())), file);
+            item.status = status;
+            item.summary = "Saved local audio. Tap Transcribe again to run the offline ASR pipeline.";
+            upsertLibraryItem(item);
+            count++;
+        }
+    }
+
+    private boolean isSupportedAudioFile(File file) {
+        String name = file.getName().toLowerCase(Locale.US);
+        return name.endsWith(".wav")
+                || name.endsWith(".m4a")
+                || name.endsWith(".mp3")
+                || name.endsWith(".aac")
+                || name.endsWith(".flac")
+                || name.endsWith(".ogg");
+    }
+
+    private String stripTimestamp(String name) {
+        return name.replaceFirst("^\\d+[_-]+", "");
     }
 
     private void pickAudio() {
@@ -802,6 +853,7 @@ public class MainActivity extends AppCompatActivity {
             currentItem = new RecordingItem(UUID.randomUUID().toString(), stripExt(name), target);
             currentItem.status = "Transcribing";
             currentItem.summary = "Imported audio is stored locally. Offline SenseVoice transcription is running.";
+            upsertLibraryItem(currentItem);
             renderCurrent();
             transcribeImportedAudio(currentItem, target);
         } catch (Exception ex) {
@@ -827,6 +879,7 @@ public class MainActivity extends AppCompatActivity {
                     targetItem.durationLabel = result.getDurationLabel();
                     targetItem.status = "Transcribed";
                     targetItem.summary = result.getSummary();
+                    upsertLibraryItem(targetItem);
                     statusText.setText("Imported audio transcribed offline");
                     stageText.setText("Offline file transcription complete");
                     progress.setProgress(100);
@@ -837,6 +890,7 @@ public class MainActivity extends AppCompatActivity {
                     if (currentItem == targetItem) {
                         targetItem.status = "Imported";
                         targetItem.summary = "Imported audio is stored locally.\n\nOffline transcription failed: " + ex.getMessage();
+                        upsertLibraryItem(targetItem);
                         statusText.setText("Imported audio stored");
                         stageText.setText("Offline file transcription failed");
                         renderCurrent();
@@ -870,7 +924,25 @@ public class MainActivity extends AppCompatActivity {
         }
 
         library.removeAllViews();
-        library.addView(libraryRow(currentItem));
+        if (libraryItems.isEmpty()) {
+            library.addView(label("No local sessions yet.", 14, Color.rgb(92, 101, 98), false));
+        } else {
+            for (RecordingItem item : libraryItems) {
+                library.addView(libraryRow(item));
+                library.addView(space(8));
+            }
+        }
+    }
+
+    private void upsertLibraryItem(RecordingItem item) {
+        if (item == null) return;
+        for (int i = 0; i < libraryItems.size(); i++) {
+            if (libraryItems.get(i).id.equals(item.id)) {
+                libraryItems.set(i, item);
+                return;
+            }
+        }
+        libraryItems.add(0, item);
     }
 
     private void refreshLocalKeywords(RecordingItem item, String partialText) {
@@ -1005,11 +1077,39 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private View libraryRow(RecordingItem item) {
-        LinearLayout row = row();
-        row.setGravity(Gravity.CENTER_VERTICAL);
-        TextView left = label(item.title + "\n" + item.durationLabel + " / " + item.status, 14, Color.rgb(42, 50, 48), false);
-        row.addView(left, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-        return row;
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(dp(10), dp(8), dp(10), dp(8));
+        GradientDrawable bg = new GradientDrawable();
+        bg.setColor(currentItem == item ? Color.rgb(250, 248, 243) : Color.rgb(255, 252, 246));
+        bg.setStroke(dp(1), currentItem == item ? Color.rgb(196, 211, 205) : Color.rgb(231, 226, 218));
+        bg.setCornerRadius(dp(8));
+        box.setBackground(bg);
+        box.setOnClickListener(v -> {
+            currentItem = item;
+            renderCurrent();
+        });
+
+        String fileState = item.audioFile != null && item.audioFile.exists()
+                ? "Audio saved"
+                : "Transcript only";
+        TextView left = label(item.title + "\n" + item.durationLabel + " / " + item.status + " / " + fileState, 14, Color.rgb(42, 50, 48), false);
+        box.addView(left);
+
+        if (item.audioFile != null && item.audioFile.exists()) {
+            box.addView(space(6));
+            MaterialButton transcribe = button("Transcribe again");
+            transcribe.setOnClickListener(v -> {
+                clearInputFocusAndHideKeyboard();
+                currentItem = item;
+                item.status = "Transcribing";
+                item.summary = "Saved audio is being transcribed again with the offline pipeline.";
+                renderCurrent();
+                transcribeImportedAudio(item, item.audioFile);
+            });
+            box.addView(transcribe, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(38)));
+        }
+        return box;
     }
 
     private MaterialCardView card() {
