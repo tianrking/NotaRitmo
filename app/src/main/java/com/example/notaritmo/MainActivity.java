@@ -59,6 +59,7 @@ import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.UUID;
 
 public class MainActivity extends AppCompatActivity {
@@ -584,8 +585,11 @@ public class MainActivity extends AppCompatActivity {
         savePrefs("llm_key", apiKey);
 
         final StringBuilder numbered = new StringBuilder();
+        final List<String> originalLines = new ArrayList<>();
         for (int i = 0; i < targetItem.segments.size(); i++) {
-            numbered.append(i + 1).append(". ").append(targetItem.segments.get(i).text).append('\n');
+            String text = targetItem.segments.get(i).text;
+            originalLines.add(text);
+            numbered.append(i + 1).append(". ").append(text).append('\n');
         }
         final String glossary = hotwordsText();
         savePrefs("hotwords", glossary);
@@ -594,17 +598,19 @@ public class MainActivity extends AppCompatActivity {
             try {
                 OpenAiCompatibleLlmClient client = new OpenAiCompatibleLlmClient();
                 final String out = client.correct(apiBase, apiKey, model, numbered.toString(), glossary);
+                final Map<Integer, String> corrections = OpenAiCompatibleLlmClient.parseCorrectedLines(out);
+                String correctedTranscript = correctedTranscriptForKeywords(originalLines, corrections);
                 List<String> keywords = new ArrayList<>();
                 String keywordError = null;
                 try {
-                    keywords = client.keywords(apiBase, apiKey, model, out, localKeywords);
+                    keywords = client.keywords(apiBase, apiKey, model, correctedTranscript, localKeywords);
                 } catch (Exception keywordEx) {
                     keywordError = keywordEx.getMessage();
                 }
                 final List<String> finalKeywords = keywords;
                 final String finalKeywordError = keywordError;
                 runOnUiThread(() -> {
-                    applyCorrection(targetItem, out);
+                    applyCorrection(targetItem, corrections, out);
                     if (!finalKeywords.isEmpty()) {
                         applyLlmKeywords(targetItem, finalKeywords);
                     }
@@ -620,38 +626,41 @@ public class MainActivity extends AppCompatActivity {
         }, "notaritmo-llm-correct").start();
     }
 
-    private void applyCorrection(RecordingItem targetItem, String out) {
+    private void applyCorrection(RecordingItem targetItem, Map<Integer, String> map, String rawOutput) {
         if (currentItem != targetItem || targetItem.segments.isEmpty()) return;
-        java.util.Map<Integer, String> map = new java.util.HashMap<>();
-        for (String line : out.split("\\R")) {
-            String trimmed = line.trim();
-            if (trimmed.isEmpty()) continue;
-            int dot = trimmed.indexOf('.');
-            if (dot <= 0) continue;
-            try {
-                int idx = Integer.parseInt(trimmed.substring(0, dot).trim()) - 1;
-                String text = trimmed.substring(dot + 1).trim();
-                if (idx >= 0 && !text.isEmpty()) {
-                    map.put(idx, text);
-                }
-            } catch (NumberFormatException ignored) {
-            }
-        }
         if (map.isEmpty()) {
-            summaryText.setText("LLM returned (no numbered lines parsed):\n\n" + out);
+            summaryText.setText("LLM returned (no corrections parsed):\n\n" + rawOutput);
             return;
         }
         int updated = 0;
         for (int i = 0; i < targetItem.segments.size(); i++) {
             String text = map.get(i);
-            if (text != null) {
+            if (text != null && !text.equals(targetItem.segments.get(i).text)) {
                 targetItem.segments.get(i).text = text;
                 updated++;
             }
         }
-        targetItem.summary = "Transcript corrected with LLM against the domain glossary (" + updated + " segment(s) updated).";
+        if (updated == 0) {
+            targetItem.summary = "LLM reviewed the transcript and found no safe correction to apply.";
+            renderCurrent();
+            Toast.makeText(this, "No correction applied", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        targetItem.summary = "Transcript corrected with LLM (" + updated + " segment(s) updated).";
         renderCurrent();
         Toast.makeText(this, "Corrected " + updated + " segment(s)", Toast.LENGTH_SHORT).show();
+    }
+
+    private String correctedTranscriptForKeywords(List<String> originalLines, Map<Integer, String> corrections) {
+        StringBuilder builder = new StringBuilder();
+        for (int i = 0; i < originalLines.size(); i++) {
+            String text = corrections.get(i);
+            if (text == null || text.trim().isEmpty()) {
+                text = originalLines.get(i);
+            }
+            builder.append(i + 1).append(". ").append(text).append('\n');
+        }
+        return builder.toString();
     }
 
     private void seedInitialSession() {

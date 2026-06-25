@@ -4,14 +4,17 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.BufferedReader;
-import java.io.OutputStream;
 import java.io.InputStreamReader;
+import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 
 public class OpenAiCompatibleLlmClient {
@@ -25,34 +28,45 @@ public class OpenAiCompatibleLlmClient {
                 apiBase,
                 apiKey,
                 model,
-                "你是会议纪要助手。只基于转写文本总结，不编造事实。输出中文 Markdown，包含核心结论、分歧/风险、关键原文证据。",
-                "请总结以下实时本地 ASR 转写：\n\n" + transcript,
+                "You are a meeting-notes assistant. Summarize only the provided ASR transcript. "
+                        + "Do not invent facts. Write concise Chinese Markdown with conclusions, next steps, risks, and quoted evidence.",
+                "Please summarize this local ASR transcript:\n\n" + transcript,
                 1800
         );
     }
 
     /**
-     * Layer ④: LLM post-correction. Feed the transcript plus the user domain
-     * glossary (hotwords) and ask the model to rewrite only entity / proper-noun
-     * / term spellings to match the glossary, preserving spoken meaning, order,
-     * and tone. Runs only when the user configures an LLM endpoint; it never
-     * touches raw audio. The transcript is a numbered list so callers can map
-     * corrected lines back onto their segments.
+     * LLM post-correction. This is intentionally stronger than pure glossary
+     * normalization: the model may fix obvious ASR errors, homophones, broken
+     * technical terms, punctuation, and mixed Chinese/English product names,
+     * while preserving the speaker's meaning and order.
      */
     public String correct(String apiBase, String apiKey, String model, String transcript, String glossary) throws Exception {
         String glossaryBlock = (glossary == null || glossary.trim().isEmpty())
-                ? "(未提供领域词表，仅做通用专有名词纠错)"
+                ? "(none)"
                 : glossary.trim();
         return chat(
                 apiBase,
                 apiKey,
                 model,
-                "你是语音转写后纠错助手。给定按行编号的转写文本和一个领域词表(热词)，"
-                        + "只把实体名、专有名词、术语、产品名修正为词表中的标准写法。"
-                        + "保持原意、语序和口语风格，不增删内容，不改非实体词，不要解释。"
-                        + "严格逐行输出，格式与输入完全一致：每行以 \"编号. \" 开头，编号与输入一一对应。",
-                "领域词表(标准写法)：\n" + glossaryBlock + "\n\n请逐行纠错以下转写(保持编号与行数)：\n\n" + transcript,
-                2200
+                "You are an expert ASR transcript correction engine for Mandarin/English mixed technical speech. "
+                        + "Input is numbered transcript lines. Correct obvious speech-recognition mistakes: homophones, "
+                        + "wrong Chinese words, broken English product names, malformed technical terms, punctuation, and spacing. "
+                        + "Use the glossary as high-priority canonical spelling, but also infer corrections from context. "
+                        + "Preserve speaker meaning, language, tone, line order, and line count. Do not summarize. Do not add new facts. "
+                        + "Return ONLY JSON with this exact shape: "
+                        + "[{\"index\":1,\"text\":\"corrected line\"},{\"index\":2,\"text\":\"corrected line\"}]. "
+                        + "Include every input line, even if unchanged. No Markdown, no explanation.",
+                "Glossary / canonical terms:\n" + glossaryBlock
+                        + "\n\nExamples of allowed ASR correction:\n"
+                        + "notar rhythm -> NotaRitmo\n"
+                        + "sense voice / sens voice -> SenseVoice\n"
+                        + "zip former -> Zipformer\n"
+                        + "fun as are -> FunASR\n"
+                        + "热刺 -> 热词, when the context is ASR hotwords\n"
+                        + "key works / keyworsk -> keywords\n"
+                        + "\nNow correct these numbered lines. Return JSON only:\n\n" + transcript,
+                2600
         );
     }
 
@@ -86,7 +100,7 @@ public class OpenAiCompatibleLlmClient {
     }
 
     static boolean isAnthropicBase(String apiBase) {
-        return apiBase != null && apiBase.toLowerCase().contains("anthropic");
+        return apiBase != null && apiBase.toLowerCase(Locale.US).contains("anthropic");
     }
 
     private String openAiChatCompletions(String base, String apiKey, String model, String systemPrompt, String userPrompt, int maxTokens) throws Exception {
@@ -94,7 +108,7 @@ public class OpenAiCompatibleLlmClient {
 
         JSONObject body = new JSONObject();
         body.put("model", model);
-        body.put("temperature", 0.2);
+        body.put("temperature", 0.1);
         body.put("max_tokens", maxTokens);
 
         JSONArray messages = new JSONArray();
@@ -140,7 +154,7 @@ public class OpenAiCompatibleLlmClient {
 
         JSONObject body = new JSONObject();
         body.put("model", model);
-        body.put("temperature", 0.2);
+        body.put("temperature", 0.1);
         body.put("max_tokens", maxTokens);
         body.put("system", systemPrompt);
         body.put("messages", new JSONArray()
@@ -199,6 +213,112 @@ public class OpenAiCompatibleLlmClient {
         return cleanBase + "/v1/messages";
     }
 
+    public static Map<Integer, String> parseCorrectedLines(String raw) {
+        Map<Integer, String> out = new LinkedHashMap<>();
+        if (raw == null || raw.trim().isEmpty()) return out;
+
+        String cleaned = stripMarkdownFence(raw.trim());
+        try {
+            Object root = parseJsonRoot(cleaned);
+            JSONArray array = null;
+            if (root instanceof JSONArray) {
+                array = (JSONArray) root;
+            } else if (root instanceof JSONObject) {
+                JSONObject object = (JSONObject) root;
+                array = object.optJSONArray("corrections");
+                if (array == null) array = object.optJSONArray("lines");
+                if (array == null) array = object.optJSONArray("items");
+            }
+            if (array != null) {
+                for (int i = 0; i < array.length(); i++) {
+                    Object item = array.opt(i);
+                    if (item instanceof JSONObject) {
+                        JSONObject object = (JSONObject) item;
+                        int oneBased = object.optInt("index", object.optInt("line", i + 1));
+                        String text = firstNonEmpty(
+                                object.optString("text", ""),
+                                object.optString("corrected", ""),
+                                object.optString("corrected_text", ""),
+                                object.optString("correctedText", "")
+                        );
+                        addCorrection(out, oneBased - 1, text);
+                    } else {
+                        addCorrection(out, i, String.valueOf(item));
+                    }
+                }
+                if (!out.isEmpty()) return out;
+            }
+        } catch (Exception ignored) {
+        }
+        parseObjectCorrections(cleaned, out);
+        if (!out.isEmpty()) return out;
+
+        for (String line : cleaned.split("\\R")) {
+            String trimmed = line.trim();
+            if (trimmed.isEmpty()) continue;
+            int dot = trimmed.indexOf('.');
+            int colon = trimmed.indexOf(':');
+            int separator = dot > 0 ? dot : colon;
+            if (separator <= 0) continue;
+            try {
+                int idx = Integer.parseInt(trimmed.substring(0, separator).trim()) - 1;
+                addCorrection(out, idx, trimmed.substring(separator + 1));
+            } catch (NumberFormatException ignored) {
+            }
+        }
+        return out;
+    }
+
+    private static void parseObjectCorrections(String cleaned, Map<Integer, String> out) {
+        java.util.regex.Matcher matcher = java.util.regex.Pattern
+                .compile("\\{([^{}]+)\\}")
+                .matcher(cleaned);
+        int ordinal = 0;
+        while (matcher.find()) {
+            String body = matcher.group(1);
+            int oneBased = extractIntField(body, "index");
+            if (oneBased <= 0) oneBased = extractIntField(body, "line");
+            if (oneBased <= 0) oneBased = ordinal + 1;
+            String text = firstNonEmpty(
+                    extractStringField(body, "text"),
+                    extractStringField(body, "corrected"),
+                    extractStringField(body, "corrected_text"),
+                    extractStringField(body, "correctedText")
+            );
+            addCorrection(out, oneBased - 1, text);
+            ordinal++;
+        }
+    }
+
+    private static int extractIntField(String body, String key) {
+        java.util.regex.Matcher matcher = java.util.regex.Pattern
+                .compile("\"" + java.util.regex.Pattern.quote(key) + "\"\\s*:\\s*(\\d+)")
+                .matcher(body);
+        if (!matcher.find()) return -1;
+        try {
+            return Integer.parseInt(matcher.group(1));
+        } catch (NumberFormatException ignored) {
+            return -1;
+        }
+    }
+
+    private static String extractStringField(String body, String key) {
+        java.util.regex.Matcher matcher = java.util.regex.Pattern
+                .compile("\"" + java.util.regex.Pattern.quote(key) + "\"\\s*:\\s*\"((?:\\\\.|[^\"\\\\])*)\"")
+                .matcher(body);
+        if (!matcher.find()) return "";
+        return unescapeJsonString(matcher.group(1));
+    }
+
+    private static String unescapeJsonString(String value) {
+        return value
+                .replace("\\n", "\n")
+                .replace("\\r", "\r")
+                .replace("\\t", "\t")
+                .replace("\\\"", "\"")
+                .replace("\\\\", "\\");
+    }
+
     public static List<String> parseKeywords(String raw, int maxKeywords) {
         Set<String> seen = new LinkedHashSet<>();
         List<String> out = new ArrayList<>();
@@ -224,6 +344,20 @@ public class OpenAiCompatibleLlmClient {
         return out;
     }
 
+    private static Object parseJsonRoot(String cleaned) throws Exception {
+        int arrayStart = cleaned.indexOf('[');
+        int arrayEnd = cleaned.lastIndexOf(']');
+        int objectStart = cleaned.indexOf('{');
+        int objectEnd = cleaned.lastIndexOf('}');
+        if (objectStart >= 0 && objectEnd > objectStart && (arrayStart < 0 || objectStart < arrayStart)) {
+            return new JSONObject(cleaned.substring(objectStart, objectEnd + 1));
+        }
+        if (arrayStart >= 0 && arrayEnd > arrayStart) {
+            return new JSONArray(cleaned.substring(arrayStart, arrayEnd + 1));
+        }
+        throw new IllegalArgumentException("No JSON root");
+    }
+
     private static String stripMarkdownFence(String text) {
         if (!text.startsWith("```")) return text;
         String[] lines = text.split("\\R");
@@ -235,6 +369,19 @@ public class OpenAiCompatibleLlmClient {
             builder.append(line);
         }
         return builder.toString().trim();
+    }
+
+    private static String firstNonEmpty(String... values) {
+        for (String value : values) {
+            if (value != null && !value.trim().isEmpty()) return value;
+        }
+        return "";
+    }
+
+    private static void addCorrection(Map<Integer, String> out, int zeroBasedIndex, String raw) {
+        String text = raw == null ? "" : raw.trim();
+        if (zeroBasedIndex < 0 || text.isEmpty()) return;
+        out.put(zeroBasedIndex, text);
     }
 
     private static void addKeyword(List<String> out, Set<String> seen, String raw, int maxKeywords) {
@@ -249,7 +396,7 @@ public class OpenAiCompatibleLlmClient {
             keyword = keyword.substring(0, keyword.length() - 1).trim();
         }
         if (keyword.length() < 2 || keyword.length() > 32 || keyword.matches("\\d+")) return;
-        String key = keyword.toLowerCase();
+        String key = keyword.toLowerCase(Locale.US);
         if (seen.add(key)) {
             out.add(keyword);
         }
