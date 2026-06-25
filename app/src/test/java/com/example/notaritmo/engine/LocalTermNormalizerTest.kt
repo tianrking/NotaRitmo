@@ -57,4 +57,17 @@ class LocalTermNormalizerTest {
         val out = normalizer.normalize("我们去了上海中心")
         assertTrue("expected 上海中心 preserved, got: $out", out.contains("上海中心"))
     }
+
+    @Test
+    fun `anthropic compatible base uses messages endpoint`() {
+        assertTrue(OpenAiCompatibleLlmClient.isAnthropicBase("https://open.bigmodel.cn/api/anthropic"))
+        assertEquals(
+            "https://open.bigmodel.cn/api/anthropic/v1/messages",
+            OpenAiCompatibleLlmClient.anthropicMessagesUrl("https://open.bigmodel.cn/api/anthropic"),
+        )
+        assertEquals(
+            "https://open.bigmodel.cn/api/anthropic/v1/messages",
+            OpenAiCompatibleLlmClient.anthropicMessagesUrl("https://open.bigmodel.cn/api/anthropic/v1"),
+        )
+    }
 }

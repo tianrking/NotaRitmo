@@ -31,7 +31,7 @@
 **NotaRitmo** 是一个 **本地优先 (local-first)** 的 Android 语音处理应用，专为**会议记录、听写与转写**设计。
 它通过 **sherpa-onnx + ONNX Runtime** 在设备端完成**全部语音识别链路**——从麦克风采集、实时流式 ASR、到停录后的精细化转写、说话人分离、标点恢复与声纹匹配。
 
-> 🔒 **核心理念：原始音频默认不出设备。** 只有最终转写文本（可选）才会发送给外部 LLM 做摘要，音频本身永不外传。
+> 🔒 **核心理念：原始音频默认不出设备。** 只有最终转写文本（可选）才会发送给外部 LLM 做摘要/纠错，音频本身永不外传。
 
 ### ✨ 核心能力
 
@@ -45,7 +45,7 @@
 | 🔉 **静音切除 (VAD)** | Silero VAD 在精修前切分语音段、剔除静音 |
 | 🧬 **声纹注册与匹配** | 本地余弦相似度匹配已注册说话人，身份对齐 |
 | 📂 **音频导入转写** | 通过系统选择器导入文件，本地 `MediaCodec` 解码后走同一套精修流水线 |
-| ☁️ **可选 LLM 摘要** | 对接任意 OpenAI 兼容端点（如 DeepSeek），仅传入最终文本 |
+| ☁️ **可选 LLM 摘要/纠错** | 对接 OpenAI-compatible 或 Anthropic-compatible 文本端点，仅传入最终文本 |
 
 ---
 
@@ -352,7 +352,7 @@ NotaRitmo/
 │       │   │   ├── OfflineAudioTranscriber.kt      # 文件转写(复用流水线)
 │       │   │   ├── SherpaModelDownloader.java      # 模型分发
 │       │   │   ├── SherpaPackagedModelInstaller.kt # APK 内置模型安装
-│       │   │   ├── OpenAiCompatibleLlmClient.java  # 可选 LLM 摘要
+│       │   │   ├── OpenAiCompatibleLlmClient.java  # 可选 OpenAI/Anthropic 文本 LLM
 │       │   │   ├── LocalTermNormalizer.kt          # 本地术语归一
 │       │   │   ├── TranscriptText.kt               # 文本清洗
 │       │   │   └── SenseVoiceTags.kt               # 标签映射
@@ -466,7 +466,8 @@ adb install -r .\app\build\outputs\apk\debug\app-debug.apk
 
 - **`Start live ASR`** — 实时听写,边说边出字,停录后自动精修
 - **`Import audio`** — 导入本地音频文件离线转写
-- **`Summarize with SaaS LLM`** — (可选)填入 OpenAI 兼容端点做文本摘要
+- **`Summarize with SaaS LLM`** — (可选)填入 OpenAI-compatible 或 Anthropic-compatible 端点做文本摘要
+- **`Correct transcript with LLM`** — (可选)把最终文本和热词/术语表发给文本 LLM，只纠正专有名词和术语
 
 ### 🛠️ 开发者模式:手动准备模型
 

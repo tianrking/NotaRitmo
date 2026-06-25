@@ -11,6 +11,9 @@ import java.net.URL;
 import java.nio.charset.StandardCharsets;
 
 public class OpenAiCompatibleLlmClient {
+    private static final String DEFAULT_OPENAI_BASE = "https://api.deepseek.com";
+    private static final String DEFAULT_OPENAI_MODEL = "deepseek-chat";
+    private static final String ANTHROPIC_VERSION = "2023-06-01";
 
     /** Summarize finalized local ASR text into meeting notes. */
     public String summarize(String apiBase, String apiKey, String model, String transcript) throws Exception {
@@ -50,12 +53,23 @@ public class OpenAiCompatibleLlmClient {
     }
 
     private String chat(String apiBase, String apiKey, String model, String systemPrompt, String userPrompt, int maxTokens) throws Exception {
-        String base = apiBase == null || apiBase.trim().isEmpty() ? "https://api.deepseek.com" : apiBase.trim();
-        String cleanModel = model == null || model.trim().isEmpty() ? "deepseek-chat" : model.trim();
+        String base = clean(apiBase, DEFAULT_OPENAI_BASE);
+        String cleanModel = clean(model, DEFAULT_OPENAI_MODEL);
+        if (isAnthropicBase(base)) {
+            return anthropicMessages(base, apiKey, cleanModel, systemPrompt, userPrompt, maxTokens);
+        }
+        return openAiChatCompletions(base, apiKey, cleanModel, systemPrompt, userPrompt, maxTokens);
+    }
+
+    static boolean isAnthropicBase(String apiBase) {
+        return apiBase != null && apiBase.toLowerCase().contains("anthropic");
+    }
+
+    private String openAiChatCompletions(String base, String apiKey, String model, String systemPrompt, String userPrompt, int maxTokens) throws Exception {
         URL url = new URL(base.replaceAll("/+$", "") + "/chat/completions");
 
         JSONObject body = new JSONObject();
-        body.put("model", cleanModel);
+        body.put("model", model);
         body.put("temperature", 0.2);
         body.put("max_tokens", maxTokens);
 
@@ -95,5 +109,73 @@ public class OpenAiCompatibleLlmClient {
                 .getJSONObject(0)
                 .getJSONObject("message")
                 .getString("content");
+    }
+
+    private String anthropicMessages(String base, String apiKey, String model, String systemPrompt, String userPrompt, int maxTokens) throws Exception {
+        URL url = new URL(anthropicMessagesUrl(base));
+
+        JSONObject body = new JSONObject();
+        body.put("model", model);
+        body.put("temperature", 0.2);
+        body.put("max_tokens", maxTokens);
+        body.put("system", systemPrompt);
+        body.put("messages", new JSONArray()
+                .put(new JSONObject()
+                        .put("role", "user")
+                        .put("content", userPrompt)));
+
+        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+        conn.setRequestMethod("POST");
+        conn.setConnectTimeout(20000);
+        conn.setReadTimeout(120000);
+        conn.setDoOutput(true);
+        conn.setRequestProperty("Content-Type", "application/json; charset=utf-8");
+        conn.setRequestProperty("anthropic-version", ANTHROPIC_VERSION);
+        conn.setRequestProperty("x-api-key", apiKey);
+        conn.setRequestProperty("Authorization", "Bearer " + apiKey);
+
+        byte[] bytes = body.toString().getBytes(StandardCharsets.UTF_8);
+        try (OutputStream out = conn.getOutputStream()) {
+            out.write(bytes);
+        }
+
+        int code = conn.getResponseCode();
+        BufferedReader reader = new BufferedReader(new InputStreamReader(
+                code < 400 ? conn.getInputStream() : conn.getErrorStream(),
+                StandardCharsets.UTF_8
+        ));
+        StringBuilder response = new StringBuilder();
+        String line;
+        while ((line = reader.readLine()) != null) {
+            response.append(line);
+        }
+        if (code >= 400) {
+            throw new IllegalStateException("LLM HTTP " + code + ": " + response.substring(0, Math.min(300, response.length())));
+        }
+        JSONArray content = new JSONObject(response.toString()).getJSONArray("content");
+        StringBuilder text = new StringBuilder();
+        for (int i = 0; i < content.length(); i++) {
+            JSONObject item = content.getJSONObject(i);
+            if ("text".equals(item.optString("type")) && item.has("text")) {
+                if (text.length() > 0) text.append('\n');
+                text.append(item.getString("text"));
+            }
+        }
+        return text.toString();
+    }
+
+    static String anthropicMessagesUrl(String base) {
+        String cleanBase = base.replaceAll("/+$", "");
+        if (cleanBase.endsWith("/v1")) {
+            return cleanBase + "/messages";
+        }
+        if (cleanBase.endsWith("/messages")) {
+            return cleanBase;
+        }
+        return cleanBase + "/v1/messages";
+    }
+
+    private static String clean(String value, String fallback) {
+        return value == null || value.trim().isEmpty() ? fallback : value.trim();
     }
 }

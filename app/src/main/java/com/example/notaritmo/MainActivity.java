@@ -248,19 +248,19 @@ public class MainActivity extends AppCompatActivity {
         box.addView(label("LLM workspace", 18, Color.rgb(24, 32, 31), true));
         box.addView(space(8));
 
-        llmBaseInput = input("API Base, e.g. https://api.deepseek.com");
-        llmBaseInput.setText(getPrefs("llm_base", "https://api.deepseek.com"));
+        llmBaseInput = input("API Base, OpenAI or Anthropic compatible");
+        llmBaseInput.setText(getPrefs("llm_base", BuildConfig.DEFAULT_LLM_BASE));
         box.addView(llmBaseInput);
         box.addView(space(8));
 
-        llmModelInput = input("Model, e.g. deepseek-chat");
-        llmModelInput.setText(getPrefs("llm_model", "deepseek-chat"));
+        llmModelInput = input("Model, e.g. glm-5.2");
+        llmModelInput.setText(getPrefs("llm_model", BuildConfig.DEFAULT_LLM_MODEL));
         box.addView(llmModelInput);
         box.addView(space(8));
 
         llmKeyInput = input("API Key");
         llmKeyInput.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
-        llmKeyInput.setText(getPrefs("llm_key", ""));
+        llmKeyInput.setText(getPrefs("llm_key", BuildConfig.DEFAULT_LLM_API_KEY));
         box.addView(llmKeyInput);
         box.addView(space(10));
 

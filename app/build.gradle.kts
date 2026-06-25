@@ -1,5 +1,26 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
+}
+
+val localProps = Properties().apply {
+    val file = rootProject.file("local.properties")
+    if (file.exists()) {
+        file.inputStream().use(::load)
+    }
+}
+
+fun propOrEnv(name: String, fallback: String = ""): String {
+    return localProps.getProperty(name)
+        ?: System.getenv(name)
+        ?: fallback
+}
+
+fun quoted(value: String): String {
+    return "\"" + value
+        .replace("\\", "\\\\")
+        .replace("\"", "\\\"") + "\""
 }
 
 android {
@@ -18,6 +39,31 @@ android {
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        buildConfigField(
+            "String",
+            "DEFAULT_LLM_BASE",
+            quoted(propOrEnv("ANTHROPIC_BASE_URL", "https://open.bigmodel.cn/api/anthropic"))
+        )
+        buildConfigField(
+            "String",
+            "DEFAULT_LLM_MODEL",
+            quoted(
+                propOrEnv(
+                    "ANTHROPIC_DEFAULT_SONNET_MODEL",
+                    propOrEnv("ANTHROPIC_MODEL", "glm-5.2")
+                )
+            )
+        )
+        buildConfigField(
+            "String",
+            "DEFAULT_LLM_API_KEY",
+            quoted(propOrEnv("ANTHROPIC_AUTH_TOKEN", ""))
+        )
+    }
+
+    buildFeatures {
+        buildConfig = true
     }
 
     buildTypes {

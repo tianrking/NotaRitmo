@@ -2,7 +2,8 @@
 
 NotaRitmo is a local-first Android voice pipeline. Audio stays on device for
 capture, realtime ASR, and final ASR refinement. SaaS LLM calls receive text
-only.
+only, and can use either OpenAI-compatible chat completions or
+Anthropic-compatible messages endpoints.
 
 ## Layers
 
@@ -29,7 +30,8 @@ only.
   - `OfflineAudioTranscriber` reuses the local refine pipeline for imported
     files.
   - `SherpaModelDownloader` prepares all local model families.
-  - `OpenAiCompatibleLlmClient` calls an external LLM with finalized text.
+  - `OpenAiCompatibleLlmClient` calls an external OpenAI-compatible or
+    Anthropic-compatible LLM with finalized text.
 
 - `audio`
   - `PcmSessionBuffer` stores raw PCM in a temporary cache file while recording.
@@ -63,7 +65,8 @@ only.
 9. Offline punctuation restores sentence punctuation.
 10. Speaker embeddings are matched against enrolled local voiceprints when the
     embedding model is present.
-11. LLM summarization can run against the final text only.
+11. LLM summarization or glossary-based correction can run against the final
+    text only.
 
 ## Imported File Flow
 
