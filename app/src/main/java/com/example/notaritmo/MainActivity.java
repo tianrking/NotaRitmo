@@ -2,6 +2,7 @@ package com.example.notaritmo;
 
 import android.Manifest;
 import android.app.Activity;
+import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.database.Cursor;
@@ -16,6 +17,8 @@ import android.text.InputType;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.WindowManager;
+import android.view.inputmethod.InputMethodManager;
 import android.widget.EditText;
 import android.widget.HorizontalScrollView;
 import android.widget.LinearLayout;
@@ -95,11 +98,14 @@ public class MainActivity extends AppCompatActivity {
     protected void onCreate(@Nullable Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         getWindow().setStatusBarColor(Color.rgb(23, 63, 61));
+        getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN
+                | WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
         voiceSession = new VoiceSessionController(getApplicationContext(), voiceSessionListener());
         setContentView(buildContent());
         seedInitialSession();
         renderCurrent();
         refreshModelStatus();
+        clearInputFocusAndHideKeyboard();
     }
 
     private View buildContent() {
@@ -109,7 +115,10 @@ public class MainActivity extends AppCompatActivity {
 
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
+        root.setFocusable(true);
+        root.setFocusableInTouchMode(true);
         root.setPadding(dp(18), dp(18), dp(18), dp(24));
+        root.requestFocus();
         scroll.addView(root, new ScrollView.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
@@ -172,7 +181,10 @@ public class MainActivity extends AppCompatActivity {
         actions.addView(spaceHorizontal(10));
 
         MaterialButton importButton = button("Import audio");
-        importButton.setOnClickListener(v -> pickAudio());
+        importButton.setOnClickListener(v -> {
+            clearInputFocusAndHideKeyboard();
+            pickAudio();
+        });
         actions.addView(importButton, new LinearLayout.LayoutParams(0, dp(46), 1f));
         box.addView(actions);
         return card;
@@ -198,7 +210,10 @@ public class MainActivity extends AppCompatActivity {
         box.addView(space(12));
 
         downloadModelButton = button("Download ASR model");
-        downloadModelButton.setOnClickListener(v -> downloadAsrModel());
+        downloadModelButton.setOnClickListener(v -> {
+            clearInputFocusAndHideKeyboard();
+            downloadAsrModel();
+        });
         box.addView(downloadModelButton, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(44)));
         return card;
     }
@@ -265,12 +280,18 @@ public class MainActivity extends AppCompatActivity {
         box.addView(space(10));
 
         MaterialButton summarize = button("Summarize with SaaS LLM");
-        summarize.setOnClickListener(v -> summarizeWithLlm());
+        summarize.setOnClickListener(v -> {
+            clearInputFocusAndHideKeyboard();
+            summarizeWithLlm();
+        });
         box.addView(summarize, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(44)));
         box.addView(space(8));
 
         MaterialButton correct = button("Correct transcript with LLM");
-        correct.setOnClickListener(v -> correctWithLlm());
+        correct.setOnClickListener(v -> {
+            clearInputFocusAndHideKeyboard();
+            correctWithLlm();
+        });
         box.addView(correct, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(44)));
         box.addView(space(12));
 
@@ -374,6 +395,7 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void toggleLiveAsr() {
+        clearInputFocusAndHideKeyboard();
         if (realtimeAsrRunning) {
             voiceSession.stop();
             return;
@@ -794,6 +816,22 @@ public class MainActivity extends AppCompatActivity {
         edit.setMinHeight(dp(44));
         edit.setBackground(inputBackground());
         return edit;
+    }
+
+    private void clearInputFocusAndHideKeyboard() {
+        View focused = getCurrentFocus();
+        if (focused != null) {
+            focused.clearFocus();
+            InputMethodManager imm = (InputMethodManager) getSystemService(Context.INPUT_METHOD_SERVICE);
+            if (imm != null) {
+                imm.hideSoftInputFromWindow(focused.getWindowToken(), 0);
+            }
+        }
+        View root = getWindow().getDecorView();
+        if (root != null) {
+            root.setFocusableInTouchMode(true);
+            root.requestFocus();
+        }
     }
 
     private GradientDrawable inputBackground() {
