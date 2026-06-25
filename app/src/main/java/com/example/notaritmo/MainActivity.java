@@ -196,20 +196,21 @@ public class MainActivity extends AppCompatActivity {
         hotwordsInput = input("Hotwords, e.g. NotaRitmo, Android, Zipformer");
         hotwordsInput.setText(getPrefs("hotwords", "NotaRitmo\nAndroid\nZipformer\nSenseVoice"));
         hotwordsInput.setSingleLine(false);
-        hotwordsInput.setMinLines(2);
-        box.addView(hotwordsInput);
-        box.addView(space(10));
+        hotwordsInput.setMinLines(4);
+        hotwordsInput.setMaxLines(4);
+        hotwordsInput.setGravity(Gravity.TOP | Gravity.START);
+        box.addView(hotwordsInput, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(126)));
+        box.addView(space(14));
 
-        LinearLayout voiceprintRow = row();
         voiceprintNameInput = input("Voiceprint name");
         voiceprintNameInput.setText(getPrefs("voiceprint_name", "Speaker"));
-        voiceprintRow.addView(voiceprintNameInput, new LinearLayout.LayoutParams(0, dp(44), 1f));
-        voiceprintRow.addView(spaceHorizontal(10));
+        box.addView(voiceprintNameInput, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(50)));
+        box.addView(space(10));
+
         MaterialButton enrollVoiceprint = button("Enroll voiceprint");
         enrollVoiceprint.setOnClickListener(v -> enrollVoiceprint());
-        voiceprintRow.addView(enrollVoiceprint, new LinearLayout.LayoutParams(0, dp(44), 1f));
-        box.addView(voiceprintRow);
-        box.addView(space(10));
+        box.addView(enrollVoiceprint, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52)));
+        box.addView(space(14));
 
         progress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
         progress.setMax(100);
@@ -342,7 +343,7 @@ public class MainActivity extends AppCompatActivity {
         } else {
             downloadModelButton.setText("Download missing ASR models");
             statusText.setText("ASR models need download");
-            stageText.setText(status.getDisplayText());
+            stageText.setText(compactModelStatus(status));
             progress.setProgress(0);
         }
     }
@@ -361,14 +362,6 @@ public class MainActivity extends AppCompatActivity {
             state.setBackgroundColor(ready ? Color.rgb(226, 240, 235) : Color.rgb(250, 225, 212));
             row.addView(state, new LinearLayout.LayoutParams(dp(96), ViewGroup.LayoutParams.WRAP_CONTENT));
             modelStatusList.addView(row);
-
-            if (!ready) {
-                String missing = "Missing: " + String.join(", ", bundle.missingFiles());
-                TextView missingText = label(missing, 11, Color.rgb(113, 83, 73), false);
-                missingText.setSingleLine(false);
-                missingText.setPadding(0, 0, 0, dp(6));
-                modelStatusList.addView(missingText);
-            }
         }
     }
 
@@ -809,6 +802,21 @@ public class MainActivity extends AppCompatActivity {
 
     private String pipelineIdleText() {
         return "Zipformer realtime\nVAD / diarization\nSenseVoice refine\nPunctuation / voiceprint";
+    }
+
+    private String compactModelStatus(VoiceModelStatus status) {
+        int readyCount = 0;
+        StringBuilder missing = new StringBuilder();
+        for (VoiceModelBundle bundle : status.getBundles()) {
+            if (bundle.isReady()) {
+                readyCount++;
+            } else {
+                if (missing.length() > 0) missing.append(", ");
+                missing.append(bundle.getLabel());
+            }
+        }
+        return "ASR models missing (" + readyCount + "/" + status.getBundles().size() + " ready)"
+                + (missing.length() > 0 ? "\nMissing: " + missing : "");
     }
 
     private String formatHotwords(String raw) {
