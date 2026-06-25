@@ -1,0 +1,207 @@
+package com.example.notaritmo.engine
+
+import android.content.Context
+import android.media.AudioFormat
+import android.media.AudioRecord
+import android.media.MediaRecorder
+import com.example.notaritmo.audio.PcmSessionBuffer
+import com.k2fsa.sherpa.onnx.EndpointConfig
+import com.k2fsa.sherpa.onnx.EndpointRule
+import com.k2fsa.sherpa.onnx.OnlineModelConfig
+import com.k2fsa.sherpa.onnx.OnlineRecognizer
+import com.k2fsa.sherpa.onnx.OnlineRecognizerConfig
+import com.k2fsa.sherpa.onnx.OnlineTransducerModelConfig
+import com.k2fsa.sherpa.onnx.getFeatureConfig
+import java.io.File
+import kotlin.concurrent.thread
+
+class SherpaRealtimeAsrEngine(
+    private val context: Context,
+    private val listener: RealtimeAsrListener,
+) {
+    private val sampleRate = 16000
+    private val modelName = MODEL_NAME
+    private val modelDir: File by lazy {
+        modelDir(context)
+    }
+
+    @Volatile
+    private var running = false
+    private var audioRecord: AudioRecord? = null
+    private var recognizer: OnlineRecognizer? = null
+    private var worker: Thread? = null
+
+    fun isModelReady(): Boolean {
+        return File(modelDir, "encoder.int8.onnx").isFile &&
+            File(modelDir, "decoder.onnx").isFile &&
+            File(modelDir, "joiner.int8.onnx").isFile &&
+            File(modelDir, "tokens.txt").isFile
+    }
+
+    fun expectedModelPath(): String = modelDir.absolutePath
+
+    fun start() {
+        if (running) return
+        if (!isModelReady()) {
+            listener.onError(
+                "Missing local ASR model. Put encoder.int8.onnx, decoder.onnx, joiner.int8.onnx and tokens.txt under ${modelDir.absolutePath}"
+            )
+            return
+        }
+
+        worker = thread(name = "notaritmo-sherpa-asr", start = true) {
+            val refineBuffer = PcmSessionBuffer(context)
+            try {
+                refineBuffer.open()
+                val config = OnlineRecognizerConfig(
+                    featConfig = getFeatureConfig(sampleRate = sampleRate, featureDim = 80),
+                    modelConfig = OnlineModelConfig(
+                        transducer = OnlineTransducerModelConfig(
+                            encoder = File(modelDir, "encoder.int8.onnx").absolutePath,
+                            decoder = File(modelDir, "decoder.onnx").absolutePath,
+                            joiner = File(modelDir, "joiner.int8.onnx").absolutePath,
+                        ),
+                        tokens = File(modelDir, "tokens.txt").absolutePath,
+                        numThreads = maxOf(1, Runtime.getRuntime().availableProcessors() / 2),
+                        provider = "cpu",
+                        modelType = "zipformer2",
+                    ),
+                    endpointConfig = EndpointConfig(
+                        rule1 = EndpointRule(false, 2.4f, 0.0f),
+                        rule2 = EndpointRule(true, 1.2f, 0.0f),
+                        rule3 = EndpointRule(false, 0.0f, 20.0f),
+                    ),
+                    enableEndpoint = true,
+                )
+
+                recognizer = OnlineRecognizer(assetManager = null, config = config)
+                val recorder = createAudioRecord()
+                audioRecord = recorder
+                running = true
+                listener.onReady(modelName)
+                recorder.startRecording()
+
+                val stream = recognizer!!.createStream()
+                val buffer = ShortArray((sampleRate * 0.1).toInt())
+
+                while (running) {
+                    val n = recorder.read(buffer, 0, buffer.size)
+                    if (n <= 0) continue
+                    refineBuffer.append(buffer, n)
+                    val samples = FloatArray(n) { i -> buffer[i] / 32768.0f }
+                    stream.acceptWaveform(samples, sampleRate)
+
+                    while (recognizer!!.isReady(stream)) {
+                        recognizer!!.decode(stream)
+                    }
+
+                    var text = recognizer!!.getResult(stream).text.trim()
+                    val endpoint = recognizer!!.isEndpoint(stream)
+
+                    if (endpoint && text.isNotEmpty()) {
+                        val padding = FloatArray((0.8 * sampleRate).toInt())
+                        stream.acceptWaveform(padding, sampleRate)
+                        while (recognizer!!.isReady(stream)) {
+                            recognizer!!.decode(stream)
+                        }
+                        text = recognizer!!.getResult(stream).text.trim()
+                    }
+
+                    if (text.isNotEmpty()) {
+                        if (endpoint) {
+                            listener.onFinal(text)
+                            recognizer!!.reset(stream)
+                        } else {
+                            listener.onPartial(text)
+                        }
+                    } else if (endpoint) {
+                        recognizer!!.reset(stream)
+                    }
+                }
+
+                stream.release()
+            } catch (t: Throwable) {
+                listener.onError(t.message ?: t.javaClass.simpleName)
+            } finally {
+                stopRecorder()
+                recognizer?.release()
+                recognizer = null
+                running = false
+                listener.onStopped()
+                refineIfPossible(refineBuffer)
+            }
+        }
+    }
+
+    fun stop() {
+        running = false
+    }
+
+    private fun createAudioRecord(): AudioRecord {
+        val minBytes = AudioRecord.getMinBufferSize(
+            sampleRate,
+            AudioFormat.CHANNEL_IN_MONO,
+            AudioFormat.ENCODING_PCM_16BIT,
+        )
+        return AudioRecord(
+            MediaRecorder.AudioSource.MIC,
+            sampleRate,
+            AudioFormat.CHANNEL_IN_MONO,
+            AudioFormat.ENCODING_PCM_16BIT,
+            maxOf(minBytes * 2, sampleRate),
+        )
+    }
+
+    private fun stopRecorder() {
+        val recorder = audioRecord ?: return
+        try {
+            recorder.stop()
+        } catch (_: Throwable) {
+        }
+        try {
+            recorder.release()
+        } catch (_: Throwable) {
+        }
+        audioRecord = null
+    }
+
+    private fun refineIfPossible(buffer: PcmSessionBuffer) {
+        val refiner = SherpaSenseVoiceRefiner(context)
+        if (!refiner.isModelReady()) {
+            buffer.delete()
+            listener.onRefineSkipped(
+                "SenseVoice refine model is missing. Tap Download ASR model to prepare both realtime and refine models."
+            )
+            return
+        }
+
+        try {
+            listener.onRefining(SherpaSenseVoiceRefiner.MODEL_NAME)
+            val samples = buffer.readFloats()
+            if (samples.isEmpty()) {
+                listener.onRefineSkipped("No captured audio was available for SenseVoice refine.")
+                return
+            }
+            val result = refiner.refine(samples, sampleRate)
+            if (result.text.isNotEmpty()) {
+                listener.onRefined(result.text, result.lang, result.emotion, result.event)
+            } else {
+                listener.onRefineSkipped("SenseVoice did not produce text for this recording.")
+            }
+        } catch (t: Throwable) {
+            listener.onRefineSkipped(t.message ?: t.javaClass.simpleName)
+        } finally {
+            buffer.delete()
+        }
+    }
+
+    companion object {
+        const val MODEL_NAME = "sherpa-onnx-streaming-zipformer-zh-int8-2025-06-30"
+
+        @JvmStatic
+        fun modelDir(context: Context): File {
+            val external = context.getExternalFilesDir("models")
+            return File(external ?: File(context.filesDir, "models"), MODEL_NAME)
+        }
+    }
+}
