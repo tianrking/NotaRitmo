@@ -7,7 +7,8 @@ public class TranscriptSegment {
     public final String role;
     public final String emotion;
     public final String event;
-    public final String text;
+    /** Mutable so the optional LLM post-correction pass (layer ④) can rewrite it in place. */
+    public String text;
     public final float confidence;
 
     public TranscriptSegment(

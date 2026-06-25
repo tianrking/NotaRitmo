@@ -66,6 +66,14 @@ public class VoiceSessionController {
         this.hotwords = hotwords == null ? "" : hotwords;
     }
 
+    /**
+     * Layer ⑤: load the user domain glossary into the local term normalizer.
+     * Runs deterministically after decode, with or without a network.
+     */
+    public void setGlossary(String glossaryText) {
+        termNormalizer.setUserGlossary(glossaryText);
+    }
+
     public void enrollNextRecording(String name) {
         pendingEnrollmentName = name == null ? "" : name.trim();
     }

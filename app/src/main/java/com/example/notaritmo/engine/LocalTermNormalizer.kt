@@ -11,7 +11,7 @@ class LocalTermNormalizer {
         val canonical: String,
     )
 
-    private val rules = listOf(
+    private val builtInRules = listOf(
         TermRule(
             "NotaRitmo",
             listOf(
@@ -73,13 +73,54 @@ class LocalTermNormalizer {
         ),
     )
 
-    private val compiledAliases: List<CompiledAlias> = rules
-        .flatMap { rule ->
-            rule.aliases
-                .distinct()
-                .sortedByDescending { it.length }
-                .map { alias -> CompiledAlias(aliasRegex(alias), rule.canonical) }
+    /**
+     * User-supplied domain glossary. Each non-empty line is one entry, either:
+     *   canonical
+     * to enforce a single canonical spelling, or:
+     *   canonical=alias1,alias2,alias3
+     * where the aliases are common mishearings that get rewritten to the
+     * canonical form during normalization. Lines starting with '#' are ignored.
+     * This is the deterministic local post-decode biasing layer (layer ⑤);
+     * it runs without a network and complements the native shallow-fusion
+     * hotwords fed to the recognizer at decode time (layer ①).
+     */
+    private val userRules = mutableListOf<TermRule>()
+
+    private var compiledAliases: List<CompiledAlias> = emptyList()
+
+    init {
+        recompile()
+    }
+
+    fun setUserGlossary(text: String?) {
+        userRules.clear()
+        if (text.isNullOrEmpty()) {
+            recompile()
+            return
         }
+        for (rawLine in text.lines()) {
+            val line = rawLine.trim()
+            if (line.isEmpty() || line.startsWith("#")) continue
+            val eq = line.indexOf('=')
+            val canonical: String
+            val aliases: List<String>
+            if (eq < 0) {
+                canonical = line
+                aliases = listOf(line)
+            } else {
+                canonical = line.substring(0, eq).trim()
+                val parsed = line.substring(eq + 1)
+                    .split(",", "，", "|")
+                    .map { it.trim() }
+                    .filter { it.isNotEmpty() }
+                aliases = (listOf(canonical) + parsed).distinct()
+            }
+            if (canonical.isNotEmpty()) {
+                userRules += TermRule(canonical, aliases)
+            }
+        }
+        recompile()
+    }
 
     fun normalize(text: String): String {
         var result = text
@@ -87,6 +128,16 @@ class LocalTermNormalizer {
             result = alias.regex.replace(result, alias.canonical)
         }
         return result
+    }
+
+    private fun recompile() {
+        compiledAliases = (builtInRules + userRules)
+            .flatMap { rule ->
+                rule.aliases
+                    .distinct()
+                    .sortedByDescending { it.length }
+                    .map { alias -> CompiledAlias(aliasRegex(alias), rule.canonical) }
+            }
     }
 
     private fun aliasRegex(alias: String): Regex {

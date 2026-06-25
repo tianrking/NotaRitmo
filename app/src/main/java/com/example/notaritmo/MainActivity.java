@@ -78,6 +78,7 @@ public class MainActivity extends AppCompatActivity {
     private EditText llmBaseInput;
     private EditText llmModelInput;
     private EditText llmKeyInput;
+    private EditText hotwordsInput;
 
     private boolean realtimeAsrRunning;
 
@@ -122,6 +123,8 @@ public class MainActivity extends AppCompatActivity {
         root.addView(buildRecorderCard());
         root.addView(space(14));
         root.addView(buildPipelineCard());
+        root.addView(space(14));
+        root.addView(buildHotwordsCard());
         root.addView(space(14));
         root.addView(buildTimelineCard());
         root.addView(space(14));
@@ -200,6 +203,32 @@ public class MainActivity extends AppCompatActivity {
         return card;
     }
 
+    private View buildHotwordsCard() {
+        MaterialCardView card = card();
+        LinearLayout box = cardBody();
+        card.addView(box);
+        box.addView(label("Hotwords / glossary", 18, Color.rgb(24, 32, 31), true));
+        box.addView(label("每行一个词。写  术语=误识1,误识2  可自动纠正误识。", 12, Color.rgb(92, 101, 98), false));
+        box.addView(label("解码期浅融合 ① + 本地词表替换 ⑤(始终生效);联网时还可点 LLM 纠错 ④。", 12, Color.rgb(92, 101, 98), false));
+        box.addView(space(8));
+
+        hotwordsInput = new EditText(this);
+        hotwordsInput.setHint("NotaRitmo\nAndroid\nZipformer");
+        hotwordsInput.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE);
+        hotwordsInput.setSingleLine(false);
+        hotwordsInput.setMinLines(3);
+        hotwordsInput.setGravity(Gravity.TOP);
+        hotwordsInput.setTextSize(13);
+        hotwordsInput.setTypeface(android.graphics.Typeface.MONOSPACE);
+        hotwordsInput.setTextColor(Color.rgb(24, 32, 31));
+        hotwordsInput.setHintTextColor(Color.rgb(122, 132, 128));
+        hotwordsInput.setPadding(dp(12), dp(8), dp(12), dp(8));
+        hotwordsInput.setBackground(inputBackground());
+        hotwordsInput.setText(getPrefs("hotwords", defaultHotwords()));
+        box.addView(hotwordsInput, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(108)));
+        return card;
+    }
+
     private View buildTimelineCard() {
         MaterialCardView card = card();
         LinearLayout box = cardBody();
@@ -238,6 +267,11 @@ public class MainActivity extends AppCompatActivity {
         MaterialButton summarize = button("Summarize with SaaS LLM");
         summarize.setOnClickListener(v -> summarizeWithLlm());
         box.addView(summarize, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(44)));
+        box.addView(space(8));
+
+        MaterialButton correct = button("Correct transcript with LLM");
+        correct.setOnClickListener(v -> correctWithLlm());
+        box.addView(correct, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(44)));
         box.addView(space(12));
 
         summaryText = label("", 14, Color.rgb(42, 50, 48), false);
@@ -352,8 +386,16 @@ public class MainActivity extends AppCompatActivity {
             ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.RECORD_AUDIO}, REQ_AUDIO);
             return;
         }
-        voiceSession.setHotwords(formatHotwords(defaultHotwords()));
+        applyHotwordsToSession();
         voiceSession.start();
+    }
+
+    /** Push the hotwords/glossary field into the session (layer ① + ⑤) and persist it. */
+    private void applyHotwordsToSession() {
+        String raw = hotwordsInput.getText().toString();
+        savePrefs("hotwords", raw);
+        voiceSession.setHotwords(canonicalHotwords(raw));
+        voiceSession.setGlossary(raw);
     }
 
     private VoiceSessionListener voiceSessionListener() {
@@ -446,7 +488,7 @@ public class MainActivity extends AppCompatActivity {
     public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
         if (requestCode == REQ_AUDIO && grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-            voiceSession.setHotwords(formatHotwords(defaultHotwords()));
+            applyHotwordsToSession();
             voiceSession.start();
         }
     }
@@ -478,6 +520,76 @@ public class MainActivity extends AppCompatActivity {
                 runOnUiThread(() -> summaryText.setText("LLM failed: " + ex.getMessage()));
             }
         }, "notaritmo-llm").start();
+    }
+
+    /** Layer ④: optional LLM post-correction. Sends the numbered transcript plus the
+     *  domain glossary to an OpenAI-compatible endpoint and maps corrected lines
+     *  back onto the segments. Only final text leaves the device; raw audio never does. */
+    private void correctWithLlm() {
+        if (currentItem == null || currentItem.segments.isEmpty()) {
+            Toast.makeText(this, "No finalized local ASR transcript yet.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        final String apiBase = llmBaseInput.getText().toString().trim();
+        final String model = llmModelInput.getText().toString().trim();
+        final String apiKey = llmKeyInput.getText().toString().trim();
+        if (apiKey.isEmpty()) {
+            Toast.makeText(this, "Fill API Key first.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        savePrefs("llm_base", apiBase);
+        savePrefs("llm_model", model);
+        savePrefs("llm_key", apiKey);
+
+        final StringBuilder numbered = new StringBuilder();
+        for (int i = 0; i < currentItem.segments.size(); i++) {
+            numbered.append(i + 1).append(". ").append(currentItem.segments.get(i).text).append('\n');
+        }
+        final String glossary = hotwordsInput.getText().toString();
+        savePrefs("hotwords", glossary);
+        summaryText.setText("Correcting transcript with LLM...");
+        new Thread(() -> {
+            try {
+                final String out = new OpenAiCompatibleLlmClient().correct(apiBase, apiKey, model, numbered.toString(), glossary);
+                runOnUiThread(() -> applyCorrection(out));
+            } catch (Exception ex) {
+                runOnUiThread(() -> summaryText.setText("LLM correction failed: " + ex.getMessage()));
+            }
+        }, "notaritmo-llm-correct").start();
+    }
+
+    private void applyCorrection(String out) {
+        if (currentItem == null || currentItem.segments.isEmpty()) return;
+        java.util.Map<Integer, String> map = new java.util.HashMap<>();
+        for (String line : out.split("\\R")) {
+            String trimmed = line.trim();
+            if (trimmed.isEmpty()) continue;
+            int dot = trimmed.indexOf('.');
+            if (dot <= 0) continue;
+            try {
+                int idx = Integer.parseInt(trimmed.substring(0, dot).trim()) - 1;
+                String text = trimmed.substring(dot + 1).trim();
+                if (idx >= 0 && !text.isEmpty()) {
+                    map.put(idx, text);
+                }
+            } catch (NumberFormatException ignored) {
+            }
+        }
+        if (map.isEmpty()) {
+            summaryText.setText("LLM returned (no numbered lines parsed):\n\n" + out);
+            return;
+        }
+        int updated = 0;
+        for (int i = 0; i < currentItem.segments.size(); i++) {
+            String text = map.get(i);
+            if (text != null) {
+                currentItem.segments.get(i).text = text;
+                updated++;
+            }
+        }
+        currentItem.summary = "Transcript corrected with LLM against the domain glossary (" + updated + " segment(s) updated).";
+        renderCurrent();
+        Toast.makeText(this, "Corrected " + updated + " segment(s)", Toast.LENGTH_SHORT).show();
     }
 
     private void seedInitialSession() {
@@ -544,8 +656,12 @@ public class MainActivity extends AppCompatActivity {
         progress.setProgress(64);
         new Thread(() -> {
             try {
-                OfflineTranscriptionResult result = new OfflineAudioTranscriber(getApplicationContext())
-                        .transcribe(Uri.fromFile(audioFile));
+                OfflineAudioTranscriber transcriber = new OfflineAudioTranscriber(getApplicationContext());
+                String rawHw = hotwordsInput.getText().toString();
+                savePrefs("hotwords", rawHw);
+                transcriber.setHotwords(canonicalHotwords(rawHw));
+                transcriber.setGlossaryText(rawHw);
+                OfflineTranscriptionResult result = transcriber.transcribe(Uri.fromFile(audioFile));
                 runOnUiThread(() -> {
                     if (currentItem == null) return;
                     currentItem.segments.clear();
@@ -781,16 +897,21 @@ public class MainActivity extends AppCompatActivity {
         return "NotaRitmo\nAndroid\nZipformer\nSenseVoice";
     }
 
-    private String formatHotwords(String raw) {
-        String[] terms = raw.split("[,，\\n]");
-        StringBuilder builder = new StringBuilder();
-        for (String term : terms) {
-            String normalized = term.trim();
-            if (!normalized.isEmpty()) {
-                builder.append(normalized).append(":2.0\n");
-            }
+    /** Newline-joined canonical terms for native shallow-fusion hotwords (layer ①).
+     *  Strips any "=alias" suffix and comments so the glossary syntax never
+     *  reaches the decoder token table. */
+    private String canonicalHotwords(String raw) {
+        StringBuilder out = new StringBuilder();
+        for (String line : raw.split("\\R")) {
+            String trimmed = line.trim();
+            if (trimmed.isEmpty() || trimmed.startsWith("#")) continue;
+            int eq = trimmed.indexOf('=');
+            String canonical = (eq < 0) ? trimmed : trimmed.substring(0, eq).trim();
+            if (canonical.isEmpty()) continue;
+            if (out.length() > 0) out.append('\n');
+            out.append(canonical);
         }
-        return builder.toString();
+        return out.toString();
     }
 
     private String getPrefs(String key, String fallback) {
