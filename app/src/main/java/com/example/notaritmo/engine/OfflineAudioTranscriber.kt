@@ -28,7 +28,10 @@ class OfflineAudioTranscriber(
 
         val refined = refine(samples, refiner)
         if (refined.isEmpty()) {
-            throw IllegalStateException("SenseVoice did not produce text")
+            val duration = samples.size.toFloat() / sampleRate
+            throw IllegalStateException(
+                "SenseVoice did not produce text from ${"%.1f".format(duration)}s audio. Try a louder/cleaner recording.",
+            )
         }
 
         val punctuation = SherpaPunctuationRestorer(context)
@@ -53,7 +56,10 @@ class OfflineAudioTranscriber(
             }
         }
         if (segments.isEmpty()) {
-            throw IllegalStateException("SenseVoice did not produce meaningful speech")
+            val duration = samples.size.toFloat() / sampleRate
+            throw IllegalStateException(
+                "SenseVoice decoded ${"%.1f".format(duration)}s audio but did not produce meaningful speech. Try speaking closer to the microphone or importing cleaner audio.",
+            )
         }
 
         val duration = VoiceSessionController.formatDuration(samples.size.toFloat() / sampleRate)
@@ -71,14 +77,15 @@ class OfflineAudioTranscriber(
         val voiceprintExtractor = SherpaVoiceprintExtractor(context).takeIf { it.isModelReady() }
         val diarized = SherpaSpeakerDiarizer(context).diarize(samples)
         if (diarized.isNotEmpty()) {
-            return diarized.mapNotNull { segment ->
+            val diarizedResult = diarized.mapNotNull { segment ->
                 refineSegment(segment, refiner, voiceprintExtractor)
             }
+            if (diarizedResult.isNotEmpty()) return diarizedResult
         }
 
         val vadSegments = SherpaVadSegmenter(context).split(samples)
         var cursorSeconds = 0f
-        return vadSegments.mapNotNull { segmentSamples ->
+        val vadResult = vadSegments.mapNotNull { segmentSamples ->
             val start = cursorSeconds
             val end = start + segmentSamples.size.toFloat() / sampleRate
             cursorSeconds = end
@@ -98,6 +105,22 @@ class OfflineAudioTranscriber(
                 )
             }
         }
+        if (vadResult.isNotEmpty()) return vadResult
+
+        val full = refiner.refine(samples, sampleRate)
+        if (full.text.isEmpty()) return emptyList()
+        return listOf(
+            RefinedTranscriptSegment(
+                startSeconds = 0f,
+                endSeconds = samples.size.toFloat() / sampleRate,
+                speaker = "Speaker 1",
+                text = full.text,
+                lang = full.lang,
+                emotion = full.emotion,
+                event = full.event,
+                embedding = voiceprintExtractor?.extract(samples, sampleRate) ?: FloatArray(0),
+            ),
+        )
     }
 
     private fun refineSegment(
