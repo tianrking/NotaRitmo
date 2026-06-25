@@ -182,9 +182,17 @@ class SherpaRealtimeAsrEngine(
                 listener.onRefineSkipped("No captured audio was available for SenseVoice refine.")
                 return
             }
-            val result = refiner.refine(samples, sampleRate)
-            if (result.text.isNotEmpty()) {
-                listener.onRefined(result.text, result.lang, result.emotion, result.event)
+            val segments = SherpaVadSegmenter(context).split(samples)
+            val results = segments
+                .map { segment -> refiner.refine(segment, sampleRate) }
+                .filter { result -> result.text.isNotEmpty() }
+            if (results.isNotEmpty()) {
+                listener.onRefined(
+                    results.joinToString(" ") { result -> result.text },
+                    results.firstNonBlank { result -> result.lang },
+                    results.firstNonBlank { result -> result.emotion },
+                    results.firstNonBlank { result -> result.event },
+                )
             } else {
                 listener.onRefineSkipped("SenseVoice did not produce text for this recording.")
             }
@@ -193,6 +201,10 @@ class SherpaRealtimeAsrEngine(
         } finally {
             buffer.delete()
         }
+    }
+
+    private fun List<SenseVoiceRefineResult>.firstNonBlank(selector: (SenseVoiceRefineResult) -> String): String {
+        return firstNotNullOfOrNull { result -> selector(result).takeIf { it.isNotBlank() } }.orEmpty()
     }
 
     companion object {

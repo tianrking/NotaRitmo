@@ -18,8 +18,11 @@ only.
 - `engine`
   - `SherpaRealtimeAsrEngine` captures microphone PCM and runs streaming
     Zipformer.
+  - `SherpaVadSegmenter` removes silence and splits captured speech before
+    final recognition when the VAD model is available.
   - `SherpaSenseVoiceRefiner` runs offline SenseVoice refinement after stop.
-  - `SherpaModelDownloader` prepares both model families.
+  - `SherpaPunctuationRestorer` restores punctuation on finalized local text.
+  - `SherpaModelDownloader` prepares all local model families.
   - `OpenAiCompatibleLlmClient` calls an external LLM with finalized text.
 
 - `audio`
@@ -32,16 +35,19 @@ only.
 ## Runtime Flow
 
 1. User taps `Download ASR model`.
-2. The model downloader prepares Zipformer realtime files and SenseVoice refine
-   files from packaged assets or online URLs.
+2. The model downloader prepares Zipformer realtime files, SenseVoice refine
+   files, punctuation, and VAD models from packaged assets or online URLs.
 3. User taps `Start live ASR`.
 4. `SherpaRealtimeAsrEngine` streams microphone PCM into Zipformer and writes
    the same PCM into a temporary cache file.
 5. Realtime segments are shown immediately.
 6. User stops recording.
-7. SenseVoice reads the temporary PCM, refines the final transcript locally, and
-   replaces the realtime transcript.
-8. LLM summarization can run against the final text only.
+7. If the VAD model is present, captured PCM is split into speech segments.
+   Missing VAD falls back to whole-recording refinement.
+8. SenseVoice reads the speech segments, refines the final transcript locally,
+   and exposes language, emotion, and event tags.
+9. Offline punctuation restores sentence punctuation.
+10. LLM summarization can run against the final text only.
 
 ## Reliability Rules
 

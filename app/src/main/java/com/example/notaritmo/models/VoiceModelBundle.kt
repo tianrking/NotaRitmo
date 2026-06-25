@@ -7,6 +7,7 @@ data class VoiceModelBundle(
     val repoName: String,
     val modelDir: File,
     val files: List<String>,
+    val directBaseUrl: String = "",
 ) {
     fun missingFiles(): List<String> {
         return files.filter { !File(modelDir, it).isFile }

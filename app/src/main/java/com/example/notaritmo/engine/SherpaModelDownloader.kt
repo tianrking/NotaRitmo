@@ -61,10 +61,14 @@ class SherpaModelDownloader(
     }
 
     private fun downloadWithFallback(bundle: VoiceModelBundle, fileName: String, target: File) {
-        val paths = listOf(
-            "https://huggingface.co/csukuangfj/${bundle.repoName}/resolve/main/$fileName",
-            "https://hf-mirror.com/csukuangfj/${bundle.repoName}/resolve/main/$fileName",
-        )
+        val paths = if (bundle.directBaseUrl.isNotEmpty()) {
+            listOf("${bundle.directBaseUrl.trimEnd('/')}/$fileName")
+        } else {
+            listOf(
+                "https://huggingface.co/csukuangfj/${bundle.repoName}/resolve/main/$fileName",
+                "https://hf-mirror.com/csukuangfj/${bundle.repoName}/resolve/main/$fileName",
+            )
+        }
         var last: Throwable? = null
         for (url in paths) {
             try {

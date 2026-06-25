@@ -4,6 +4,7 @@ import android.content.Context
 import com.example.notaritmo.engine.SherpaPunctuationRestorer
 import com.example.notaritmo.engine.SherpaRealtimeAsrEngine
 import com.example.notaritmo.engine.SherpaSenseVoiceRefiner
+import com.example.notaritmo.engine.SherpaVadSegmenter
 
 object VoiceModelRegistry {
     fun bundles(context: Context): List<VoiceModelBundle> {
@@ -35,6 +36,15 @@ object VoiceModelRegistry {
                 files = listOf(
                     "model.onnx",
                 ),
+            ),
+            VoiceModelBundle(
+                label = "VAD segmenter",
+                repoName = SherpaVadSegmenter.MODEL_NAME,
+                modelDir = SherpaVadSegmenter.modelDir(context),
+                files = listOf(
+                    SherpaVadSegmenter.MODEL_FILE,
+                ),
+                directBaseUrl = SherpaVadSegmenter.MODEL_URL,
             ),
         )
     }
