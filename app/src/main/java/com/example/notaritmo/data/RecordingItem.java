@@ -12,6 +12,8 @@ public class RecordingItem {
     public String status;
     public String summary;
     public final List<TranscriptSegment> segments = new ArrayList<>();
+    public final List<String> localKeywords = new ArrayList<>();
+    public final List<String> llmKeywords = new ArrayList<>();
 
     public RecordingItem(String id, String title, File audioFile) {
         this.id = id;

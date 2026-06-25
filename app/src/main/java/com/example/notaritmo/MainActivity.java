@@ -36,6 +36,7 @@ import androidx.core.content.ContextCompat;
 
 import com.example.notaritmo.data.RecordingItem;
 import com.example.notaritmo.data.TranscriptSegment;
+import com.example.notaritmo.engine.KeywordExtractor;
 import com.example.notaritmo.engine.ModelDownloadListener;
 import com.example.notaritmo.engine.OfflineAudioTranscriber;
 import com.example.notaritmo.engine.OfflineTranscriptionResult;
@@ -53,7 +54,9 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.text.SimpleDateFormat;
+import java.util.ArrayList;
 import java.util.Date;
+import java.util.List;
 import java.util.Locale;
 import java.util.UUID;
 
@@ -75,6 +78,7 @@ public class MainActivity extends AppCompatActivity {
     private TextView summaryText;
     private TextView stageText;
     private LinearLayout modelStatusList;
+    private LinearLayout keywordPanel;
     private ProgressBar progress;
     private MaterialButton recordButton;
     private MaterialButton downloadModelButton;
@@ -136,6 +140,8 @@ public class MainActivity extends AppCompatActivity {
         root.addView(buildHotwordsCard());
         root.addView(space(14));
         root.addView(buildTimelineCard());
+        root.addView(space(14));
+        root.addView(buildKeywordCard());
         root.addView(space(14));
         root.addView(buildSummaryCard());
         root.addView(space(14));
@@ -301,6 +307,19 @@ public class MainActivity extends AppCompatActivity {
         return card;
     }
 
+    private View buildKeywordCard() {
+        MaterialCardView card = card();
+        LinearLayout box = cardBody();
+        card.addView(box);
+        box.addView(label("Keywords", 18, Color.rgb(24, 32, 31), true));
+        box.addView(label("Local algorithm updates from ASR text. LLM keywords update after summarize or correction.", 12, Color.rgb(92, 101, 98), false));
+        box.addView(space(8));
+        keywordPanel = new LinearLayout(this);
+        keywordPanel.setOrientation(LinearLayout.VERTICAL);
+        box.addView(keywordPanel);
+        return card;
+    }
+
     private View buildLibraryCard() {
         MaterialCardView card = card();
         LinearLayout box = cardBody();
@@ -441,6 +460,8 @@ public class MainActivity extends AppCompatActivity {
                 runOnUiThread(() -> {
                     statusText.setText("Partial: " + text);
                     summaryText.setText("Partial\n" + text + "\n\nFinal segments: " + finalSegmentCount);
+                    refreshLocalKeywords(currentItem, text);
+                    renderKeywords(currentItem);
                 });
             }
 
@@ -521,7 +542,9 @@ public class MainActivity extends AppCompatActivity {
             return;
         }
         final RecordingItem targetItem = currentItem;
+        refreshLocalKeywords(targetItem, "");
         final String transcript = transcriptForLlm(targetItem);
+        final List<String> localKeywords = new ArrayList<>(targetItem.localKeywords);
         String apiBase = llmBaseInput.getText().toString().trim();
         String model = llmModelInput.getText().toString().trim();
         String apiKey = llmKeyInput.getText().toString().trim();
@@ -535,14 +558,33 @@ public class MainActivity extends AppCompatActivity {
         summaryText.setText("Calling LLM...");
         new Thread(() -> {
             try {
-                String result = new OpenAiCompatibleLlmClient().summarize(apiBase, apiKey, model, transcript);
+                OpenAiCompatibleLlmClient client = new OpenAiCompatibleLlmClient();
+                String result = client.summarize(apiBase, apiKey, model, transcript);
+                List<String> keywords = new ArrayList<>();
+                String keywordError = null;
+                try {
+                    keywords = client.keywords(apiBase, apiKey, model, transcript, localKeywords);
+                } catch (Exception keywordEx) {
+                    keywordError = keywordEx.getMessage();
+                }
+                final List<String> finalKeywords = keywords;
+                final String finalKeywordError = keywordError;
                 runOnUiThread(() -> {
                     if (currentItem != targetItem) return;
                     targetItem.summary = result;
-                    summaryText.setText(result);
+                    if (!finalKeywords.isEmpty()) {
+                        targetItem.llmKeywords.clear();
+                        targetItem.llmKeywords.addAll(finalKeywords);
+                    }
+                    renderCurrent();
+                    if (finalKeywordError != null) {
+                        Toast.makeText(this, "LLM keywords failed: " + finalKeywordError, Toast.LENGTH_LONG).show();
+                    }
                 });
             } catch (Exception ex) {
-                runOnUiThread(() -> summaryText.setText("LLM failed: " + ex.getMessage()));
+                runOnUiThread(() -> {
+                    if (currentItem == targetItem) summaryText.setText("LLM failed: " + ex.getMessage());
+                });
             }
         }, "notaritmo-llm").start();
     }
@@ -556,6 +598,8 @@ public class MainActivity extends AppCompatActivity {
             return;
         }
         final RecordingItem targetItem = currentItem;
+        refreshLocalKeywords(targetItem, "");
+        final List<String> localKeywords = new ArrayList<>(targetItem.localKeywords);
         final String apiBase = llmBaseInput.getText().toString().trim();
         final String model = llmModelInput.getText().toString().trim();
         final String apiKey = llmKeyInput.getText().toString().trim();
@@ -576,10 +620,30 @@ public class MainActivity extends AppCompatActivity {
         summaryText.setText("Correcting transcript with LLM...");
         new Thread(() -> {
             try {
-                final String out = new OpenAiCompatibleLlmClient().correct(apiBase, apiKey, model, numbered.toString(), glossary);
-                runOnUiThread(() -> applyCorrection(targetItem, out));
+                OpenAiCompatibleLlmClient client = new OpenAiCompatibleLlmClient();
+                final String out = client.correct(apiBase, apiKey, model, numbered.toString(), glossary);
+                List<String> keywords = new ArrayList<>();
+                String keywordError = null;
+                try {
+                    keywords = client.keywords(apiBase, apiKey, model, out, localKeywords);
+                } catch (Exception keywordEx) {
+                    keywordError = keywordEx.getMessage();
+                }
+                final List<String> finalKeywords = keywords;
+                final String finalKeywordError = keywordError;
+                runOnUiThread(() -> {
+                    applyCorrection(targetItem, out);
+                    if (!finalKeywords.isEmpty()) {
+                        applyLlmKeywords(targetItem, finalKeywords);
+                    }
+                    if (currentItem == targetItem && finalKeywordError != null) {
+                        Toast.makeText(this, "LLM keywords failed: " + finalKeywordError, Toast.LENGTH_LONG).show();
+                    }
+                });
             } catch (Exception ex) {
-                runOnUiThread(() -> summaryText.setText("LLM correction failed: " + ex.getMessage()));
+                runOnUiThread(() -> {
+                    if (currentItem == targetItem) summaryText.setText("LLM correction failed: " + ex.getMessage());
+                });
             }
         }, "notaritmo-llm-correct").start();
     }
@@ -716,10 +780,12 @@ public class MainActivity extends AppCompatActivity {
 
     private void renderCurrent() {
         if (currentItem == null) return;
+        refreshLocalKeywords(currentItem, "");
         titleText.setText(currentItem.title);
         timerText.setText(currentItem.durationLabel);
         statusText.setText(currentItem.status);
         summaryText.setText(currentItem.summary);
+        renderKeywords(currentItem);
 
         timeline.removeAllViews();
         if (currentItem.segments.isEmpty()) {
@@ -736,6 +802,79 @@ public class MainActivity extends AppCompatActivity {
 
         library.removeAllViews();
         library.addView(libraryRow(currentItem));
+    }
+
+    private void refreshLocalKeywords(RecordingItem item, String partialText) {
+        if (item == null) return;
+        StringBuilder text = new StringBuilder();
+        for (TranscriptSegment segment : item.segments) {
+            if (segment.text != null && !segment.text.trim().isEmpty()) {
+                text.append(segment.text).append('\n');
+            }
+        }
+        if (partialText != null && !partialText.trim().isEmpty()) {
+            text.append(partialText.trim()).append('\n');
+        }
+        item.localKeywords.clear();
+        item.localKeywords.addAll(KeywordExtractor.extract(
+                text.toString(),
+                hotwordsInput == null ? "" : hotwordsInput.getText().toString(),
+                12
+        ));
+    }
+
+    private void applyLlmKeywords(RecordingItem targetItem, List<String> keywords) {
+        if (currentItem != targetItem) return;
+        targetItem.llmKeywords.clear();
+        targetItem.llmKeywords.addAll(KeywordExtractor.merge(null, keywords, 12));
+        renderKeywords(targetItem);
+    }
+
+    private void renderKeywords(RecordingItem item) {
+        if (keywordPanel == null) return;
+        keywordPanel.removeAllViews();
+        if (item == null) {
+            keywordPanel.addView(label("No keywords yet.", 13, Color.rgb(92, 101, 98), false));
+            return;
+        }
+        addKeywordGroup("Local algorithm", item.localKeywords, true);
+        keywordPanel.addView(space(8));
+        addKeywordGroup("SaaS LLM", item.llmKeywords, false);
+    }
+
+    private void addKeywordGroup(String title, List<String> keywords, boolean local) {
+        keywordPanel.addView(label(title, 12, Color.rgb(92, 101, 98), true));
+        HorizontalScrollView scroller = new HorizontalScrollView(this);
+        scroller.setHorizontalScrollBarEnabled(false);
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        scroller.addView(row);
+        if (keywords == null || keywords.isEmpty()) {
+            TextView empty = label(local ? "Waiting for ASR text" : "Run LLM summary or correction", 12, Color.rgb(122, 132, 128), false);
+            empty.setPadding(dp(2), dp(6), dp(2), dp(6));
+            row.addView(empty);
+        } else {
+            for (String keyword : keywords) {
+                row.addView(keywordChip(keyword, local));
+            }
+        }
+        keywordPanel.addView(scroller);
+    }
+
+    private TextView keywordChip(String text, boolean local) {
+        TextView chip = label(text, 12, local ? Color.rgb(39, 91, 88) : Color.rgb(145, 100, 45), true);
+        chip.setGravity(Gravity.CENTER);
+        chip.setSingleLine(true);
+        chip.setPadding(dp(10), dp(6), dp(10), dp(6));
+        GradientDrawable bg = new GradientDrawable();
+        bg.setColor(local ? Color.rgb(226, 240, 235) : Color.rgb(250, 231, 204));
+        bg.setCornerRadius(dp(8));
+        bg.setStroke(dp(1), local ? Color.rgb(199, 225, 217) : Color.rgb(235, 203, 161));
+        chip.setBackground(bg);
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(32));
+        params.setMarginEnd(dp(8));
+        chip.setLayoutParams(params);
+        return chip;
     }
 
     private View segmentView(TranscriptSegment segment) {

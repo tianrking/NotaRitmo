@@ -9,6 +9,10 @@ import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Set;
 
 public class OpenAiCompatibleLlmClient {
     private static final String DEFAULT_OPENAI_BASE = "https://api.deepseek.com";
@@ -50,6 +54,26 @@ public class OpenAiCompatibleLlmClient {
                 "领域词表(标准写法)：\n" + glossaryBlock + "\n\n请逐行纠错以下转写(保持编号与行数)：\n\n" + transcript,
                 2200
         );
+    }
+
+    /** Extract post-session keywords from finalized ASR text. */
+    public List<String> keywords(String apiBase, String apiKey, String model, String transcript, List<String> localKeywords) throws Exception {
+        String localBlock = localKeywords == null || localKeywords.isEmpty()
+                ? "(none)"
+                : String.join(", ", localKeywords);
+        String raw = chat(
+                apiBase,
+                apiKey,
+                model,
+                "You extract concise hotword keywords from finalized ASR transcript text. "
+                        + "Return only a JSON array of strings. Do not invent facts. "
+                        + "Keep Chinese keywords in Chinese, preserve product names, merge duplicates, max 12 items.",
+                "Local algorithm keyword candidates:\n" + localBlock
+                        + "\n\nTranscript:\n" + transcript
+                        + "\n\nReturn only JSON, for example: [\"NotaRitmo\",\"SenseVoice\"]",
+                800
+        );
+        return parseKeywords(raw, 12);
     }
 
     private String chat(String apiBase, String apiKey, String model, String systemPrompt, String userPrompt, int maxTokens) throws Exception {
@@ -173,6 +197,62 @@ public class OpenAiCompatibleLlmClient {
             return cleanBase;
         }
         return cleanBase + "/v1/messages";
+    }
+
+    public static List<String> parseKeywords(String raw, int maxKeywords) {
+        Set<String> seen = new LinkedHashSet<>();
+        List<String> out = new ArrayList<>();
+        if (raw == null || maxKeywords <= 0) return out;
+
+        String cleaned = stripMarkdownFence(raw.trim());
+        int start = cleaned.indexOf('[');
+        int end = cleaned.lastIndexOf(']');
+        if (start >= 0 && end > start) {
+            try {
+                JSONArray array = new JSONArray(cleaned.substring(start, end + 1));
+                for (int i = 0; i < array.length(); i++) {
+                    addKeyword(out, seen, array.optString(i, ""), maxKeywords);
+                }
+                if (!out.isEmpty()) return out;
+            } catch (Exception ignored) {
+            }
+        }
+
+        for (String piece : cleaned.split("[,，;；\\n]")) {
+            addKeyword(out, seen, piece, maxKeywords);
+        }
+        return out;
+    }
+
+    private static String stripMarkdownFence(String text) {
+        if (!text.startsWith("```")) return text;
+        String[] lines = text.split("\\R");
+        StringBuilder builder = new StringBuilder();
+        for (String line : lines) {
+            String trimmed = line.trim();
+            if (trimmed.startsWith("```")) continue;
+            if (builder.length() > 0) builder.append('\n');
+            builder.append(line);
+        }
+        return builder.toString().trim();
+    }
+
+    private static void addKeyword(List<String> out, Set<String> seen, String raw, int maxKeywords) {
+        if (out.size() >= maxKeywords) return;
+        String keyword = raw == null ? "" : raw.trim()
+                .replaceAll("^[\\-\\*#\\d\\.\\)\\s]+", "")
+                .replaceAll("[\"'`\\[\\]{}]+", "")
+                .replaceAll("\\s+", " ")
+                .trim();
+        while (keyword.endsWith(".") || keyword.endsWith(",") || keyword.endsWith(";")
+                || keyword.endsWith("。") || keyword.endsWith("，") || keyword.endsWith("；")) {
+            keyword = keyword.substring(0, keyword.length() - 1).trim();
+        }
+        if (keyword.length() < 2 || keyword.length() > 32 || keyword.matches("\\d+")) return;
+        String key = keyword.toLowerCase();
+        if (seen.add(key)) {
+            out.add(keyword);
+        }
     }
 
     private static String clean(String value, String fallback) {
