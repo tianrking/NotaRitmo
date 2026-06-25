@@ -112,6 +112,7 @@ public class VoiceSessionController {
                         "Speaker 1",
                         isBlank(lang) ? "SenseVoice" : lang,
                         isBlank(emotion) ? "Refined" : emotion,
+                        isBlank(event) ? "Speech" : event,
                         finalText,
                         0.96f
                 ));

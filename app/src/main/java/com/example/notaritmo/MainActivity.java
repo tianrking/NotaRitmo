@@ -579,7 +579,11 @@ public class MainActivity extends AppCompatActivity {
         top.addView(label(segment.startLabel + " - " + segment.endLabel, 12, Color.rgb(91, 100, 97), true), new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
         top.addView(label(Math.round(segment.confidence * 100) + "%", 12, Color.rgb(39, 91, 88), true));
         box.addView(top);
-        box.addView(label(segment.speaker + " / " + segment.role + " / " + segment.emotion, 13, Color.rgb(145, 100, 45), true));
+        String meta = segment.speaker + " / " + segment.role + " / " + segment.emotion;
+        if (segment.event != null && !segment.event.isEmpty()) {
+            meta += " / " + segment.event;
+        }
+        box.addView(label(meta, 13, Color.rgb(145, 100, 45), true));
         box.addView(space(4));
         box.addView(label(segment.text, 15, Color.rgb(24, 32, 31), false));
         return card;

@@ -13,6 +13,7 @@ See `docs/ARCHITECTURE.md` for the module boundaries and runtime flow.
 - SenseVoice runs locally after stop to refine the final transcript.
 - Offline punctuation restores commas and periods for the final transcript.
 - Local hotwords bias realtime ASR toward project names, people, and terms.
+- SenseVoice language, emotion, and event tags are surfaced in the timeline.
 - LLM is intentionally external and not required for local ASR.
 
 ## Prepare the ASR model
