@@ -28,9 +28,9 @@ public class OpenAiCompatibleLlmClient {
                 apiBase,
                 apiKey,
                 model,
-                "You are a meeting-notes assistant. Summarize only the provided ASR transcript. "
-                        + "Do not invent facts. Write concise Chinese Markdown with conclusions, next steps, risks, and quoted evidence.",
-                "Please summarize this local ASR transcript:\n\n" + transcript,
+                "You are a meeting-notes assistant. Summarize all provided ASR content after correction. "
+                        + "Do not invent facts. Write concise Chinese Markdown with overall summary, key decisions, next steps, risks, and quoted evidence.",
+                "Please summarize the complete corrected local ASR transcript:\n\n" + transcript,
                 1800
         );
     }
@@ -92,9 +92,10 @@ public class OpenAiCompatibleLlmClient {
                 apiBase,
                 apiKey,
                 model,
-                "You extract concise hotword keywords from finalized ASR transcript text. "
-                        + "Return only a JSON array of strings. Do not invent facts. "
-                        + "Keep Chinese keywords in Chinese, preserve product names, merge duplicates, max 12 items.",
+                "You extract summary hotwords from finalized meeting text. Use semantic word segmentation over the summary and transcript. "
+                        + "Prefer domain terms, product names, user-intent nouns, tasks, model names, and corrected ASR terms. "
+                        + "Return only a JSON array of strings. Do not invent facts. Keep Chinese keywords in Chinese, "
+                        + "preserve product names, merge duplicates, max 12 items.",
                 "Local algorithm keyword candidates:\n" + localBlock
                         + "\n\nTranscript:\n" + transcript
                         + "\n\nReturn only JSON, for example: [\"NotaRitmo\",\"SenseVoice\"]",

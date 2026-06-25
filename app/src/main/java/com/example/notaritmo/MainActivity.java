@@ -57,14 +57,19 @@ import java.io.InputStream;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 public class MainActivity extends AppCompatActivity {
     private static final int REQ_AUDIO = 9;
     private static final int REQ_PICK_AUDIO = 12;
+    private static final int KEYWORD_LOCAL = 0;
+    private static final int KEYWORD_CORRECTION = 1;
+    private static final int KEYWORD_SUMMARY = 2;
 
     private final Handler timer = new Handler(Looper.getMainLooper());
 
@@ -258,20 +263,20 @@ public class MainActivity extends AppCompatActivity {
         box.addView(llmKeyInput);
         box.addView(space(10));
 
-        MaterialButton summarize = button("Summarize with SaaS LLM");
-        summarize.setOnClickListener(v -> {
-            clearInputFocusAndHideKeyboard();
-            summarizeWithLlm();
-        });
-        box.addView(summarize, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(44)));
-        box.addView(space(8));
-
-        MaterialButton correct = button("Correct transcript with LLM");
+        MaterialButton correct = button("1. Correct transcript with LLM");
         correct.setOnClickListener(v -> {
             clearInputFocusAndHideKeyboard();
             correctWithLlm();
         });
         box.addView(correct, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(44)));
+        box.addView(space(8));
+
+        MaterialButton summarize = button("2. Summarize + extract hotwords");
+        summarize.setOnClickListener(v -> {
+            clearInputFocusAndHideKeyboard();
+            summarizeWithLlm();
+        });
+        box.addView(summarize, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(44)));
         box.addView(space(12));
 
         summaryText = label("", 14, Color.rgb(42, 50, 48), false);
@@ -285,7 +290,7 @@ public class MainActivity extends AppCompatActivity {
         LinearLayout box = cardBody();
         card.addView(box);
         box.addView(label("Keywords", 18, Color.rgb(24, 32, 31), true));
-        box.addView(label("Local algorithm updates from ASR text. LLM keywords update after summarize or correction.", 12, Color.rgb(92, 101, 98), false));
+        box.addView(label("Local terms, AI correction highlights, and summary hotwords are shown separately.", 12, Color.rgb(92, 101, 98), false));
         box.addView(space(8));
         keywordPanel = new LinearLayout(this);
         keywordPanel.setOrientation(LinearLayout.VERTICAL);
@@ -517,7 +522,7 @@ public class MainActivity extends AppCompatActivity {
         final RecordingItem targetItem = currentItem;
         refreshLocalKeywords(targetItem, "");
         final String transcript = transcriptForLlm(targetItem);
-        final List<String> localKeywords = new ArrayList<>(targetItem.localKeywords);
+        final List<String> keywordHints = KeywordExtractor.merge(targetItem.localKeywords, targetItem.correctedKeywords, 18);
         String apiBase = llmBaseInput.getText().toString().trim();
         String model = llmModelInput.getText().toString().trim();
         String apiKey = llmKeyInput.getText().toString().trim();
@@ -536,7 +541,13 @@ public class MainActivity extends AppCompatActivity {
                 List<String> keywords = new ArrayList<>();
                 String keywordError = null;
                 try {
-                    keywords = client.keywords(apiBase, apiKey, model, transcript, localKeywords);
+                    keywords = client.keywords(
+                            apiBase,
+                            apiKey,
+                            model,
+                            "Summary:\n" + result + "\n\nFull corrected transcript:\n" + transcript,
+                            keywordHints
+                    );
                 } catch (Exception keywordEx) {
                     keywordError = keywordEx.getMessage();
                 }
@@ -585,10 +596,8 @@ public class MainActivity extends AppCompatActivity {
         savePrefs("llm_key", apiKey);
 
         final StringBuilder numbered = new StringBuilder();
-        final List<String> originalLines = new ArrayList<>();
         for (int i = 0; i < targetItem.segments.size(); i++) {
             String text = targetItem.segments.get(i).text;
-            originalLines.add(text);
             numbered.append(i + 1).append(". ").append(text).append('\n');
         }
         final String glossary = hotwordsText();
@@ -600,24 +609,8 @@ public class MainActivity extends AppCompatActivity {
                 OpenAiCompatibleLlmClient client = new OpenAiCompatibleLlmClient();
                 final String out = client.correct(apiBase, apiKey, model, numbered.toString(), glossary, correctionContext);
                 final Map<Integer, String> corrections = OpenAiCompatibleLlmClient.parseCorrectedLines(out);
-                String correctedTranscript = correctedTranscriptForKeywords(originalLines, corrections);
-                List<String> keywords = new ArrayList<>();
-                String keywordError = null;
-                try {
-                    keywords = client.keywords(apiBase, apiKey, model, correctedTranscript, localKeywords);
-                } catch (Exception keywordEx) {
-                    keywordError = keywordEx.getMessage();
-                }
-                final List<String> finalKeywords = keywords;
-                final String finalKeywordError = keywordError;
                 runOnUiThread(() -> {
                     applyCorrection(targetItem, corrections, out);
-                    if (!finalKeywords.isEmpty()) {
-                        applyLlmKeywords(targetItem, finalKeywords);
-                    }
-                    if (currentItem == targetItem && finalKeywordError != null) {
-                        Toast.makeText(this, "LLM keywords failed: " + finalKeywordError, Toast.LENGTH_LONG).show();
-                    }
                 });
             } catch (Exception ex) {
                 runOnUiThread(() -> {
@@ -629,6 +622,7 @@ public class MainActivity extends AppCompatActivity {
 
     private void applyCorrection(RecordingItem targetItem, Map<Integer, String> map, String rawOutput) {
         if (currentItem != targetItem || targetItem.segments.isEmpty()) return;
+        clearCorrectionMarkers(targetItem);
         if (map.isEmpty()) {
             summaryText.setText("LLM returned (no corrections parsed):\n\n" + rawOutput);
             return;
@@ -636,8 +630,14 @@ public class MainActivity extends AppCompatActivity {
         int updated = 0;
         for (int i = 0; i < targetItem.segments.size(); i++) {
             String text = map.get(i);
-            if (text != null && !text.equals(targetItem.segments.get(i).text)) {
-                targetItem.segments.get(i).text = text;
+            TranscriptSegment segment = targetItem.segments.get(i);
+            if (text != null && !text.equals(segment.text)) {
+                String before = segment.text;
+                segment.text = text;
+                segment.correctionBeforeText = before;
+                segment.correctionAfterText = text;
+                segment.correctionSummary = correctionSummary(before, text);
+                addUnique(targetItem.correctedKeywords, correctionKeyword(before, text), 16);
                 updated++;
             }
         }
@@ -647,21 +647,74 @@ public class MainActivity extends AppCompatActivity {
             Toast.makeText(this, "No correction applied", Toast.LENGTH_SHORT).show();
             return;
         }
+        targetItem.llmKeywords.clear();
         targetItem.summary = "Transcript corrected with LLM (" + updated + " segment(s) updated).";
         renderCurrent();
         Toast.makeText(this, "Corrected " + updated + " segment(s)", Toast.LENGTH_SHORT).show();
     }
 
-    private String correctedTranscriptForKeywords(List<String> originalLines, Map<Integer, String> corrections) {
-        StringBuilder builder = new StringBuilder();
-        for (int i = 0; i < originalLines.size(); i++) {
-            String text = corrections.get(i);
-            if (text == null || text.trim().isEmpty()) {
-                text = originalLines.get(i);
-            }
-            builder.append(i + 1).append(". ").append(text).append('\n');
+    private void clearCorrectionMarkers(RecordingItem item) {
+        item.correctedKeywords.clear();
+        for (TranscriptSegment segment : item.segments) {
+            segment.correctionBeforeText = null;
+            segment.correctionAfterText = null;
+            segment.correctionSummary = null;
         }
-        return builder.toString();
+    }
+
+    private String correctionSummary(String before, String after) {
+        String beforeSpan = changedSpan(before, after, true);
+        String afterSpan = changedSpan(before, after, false);
+        if (beforeSpan.isEmpty() && afterSpan.isEmpty()) return "";
+        if (beforeSpan.length() > 28 || afterSpan.length() > 28) {
+            return "AI corrected this sentence";
+        }
+        if (beforeSpan.isEmpty()) return "AI inserted: " + afterSpan;
+        if (afterSpan.isEmpty()) return "AI removed: " + beforeSpan;
+        return "AI corrected: " + beforeSpan + " -> " + afterSpan;
+    }
+
+    private String correctionKeyword(String before, String after) {
+        String beforeSpan = changedSpan(before, after, true);
+        String afterSpan = changedSpan(before, after, false);
+        if (!beforeSpan.isEmpty() && !afterSpan.isEmpty() && beforeSpan.length() <= 16 && afterSpan.length() <= 16) {
+            return beforeSpan + " -> " + afterSpan;
+        }
+        if (!afterSpan.isEmpty() && afterSpan.length() <= 20) return afterSpan;
+        return "Line corrected";
+    }
+
+    private String changedSpan(String before, String after, boolean fromBefore) {
+        String a = before == null ? "" : before.trim();
+        String b = after == null ? "" : after.trim();
+        int prefix = 0;
+        int min = Math.min(a.length(), b.length());
+        while (prefix < min && a.charAt(prefix) == b.charAt(prefix)) {
+            prefix++;
+        }
+        int suffix = 0;
+        while (suffix < min - prefix
+                && a.charAt(a.length() - suffix - 1) == b.charAt(b.length() - suffix - 1)) {
+            suffix++;
+        }
+        String source = fromBefore ? a : b;
+        int end = source.length() - suffix;
+        if (prefix >= end) return "";
+        return source.substring(prefix, end)
+                .trim()
+                .replaceAll("\\s+", " ");
+    }
+
+    private void addUnique(List<String> values, String value, int maxItems) {
+        String cleaned = value == null ? "" : value.trim();
+        if (cleaned.isEmpty()) return;
+        Set<String> seen = new LinkedHashSet<>();
+        for (String item : values) {
+            seen.add(item.toLowerCase(Locale.US));
+        }
+        if (seen.add(cleaned.toLowerCase(Locale.US)) && values.size() < maxItems) {
+            values.add(cleaned);
+        }
     }
 
     private String correctionContextForLlm(RecordingItem item, List<String> localKeywords, String glossary) {
@@ -853,41 +906,67 @@ public class MainActivity extends AppCompatActivity {
             keywordPanel.addView(label("No keywords yet.", 13, Color.rgb(92, 101, 98), false));
             return;
         }
-        addKeywordGroup("Local algorithm", item.localKeywords, true);
+        addKeywordGroup("Local algorithm", item.localKeywords, KEYWORD_LOCAL);
         keywordPanel.addView(space(8));
-        addKeywordGroup("SaaS LLM", item.llmKeywords, false);
+        addKeywordGroup("AI corrections", item.correctedKeywords, KEYWORD_CORRECTION);
+        keywordPanel.addView(space(8));
+        addKeywordGroup("Summary hotwords", item.llmKeywords, KEYWORD_SUMMARY);
     }
 
-    private void addKeywordGroup(String title, List<String> keywords, boolean local) {
+    private void addKeywordGroup(String title, List<String> keywords, int kind) {
         keywordPanel.addView(label(title, 12, Color.rgb(92, 101, 98), true));
         KeywordFlowLayout flow = new KeywordFlowLayout(this);
         flow.setPadding(0, dp(4), 0, 0);
         if (keywords == null || keywords.isEmpty()) {
-            TextView empty = label(local ? "Waiting for ASR text" : "Run LLM summary or correction", 12, Color.rgb(122, 132, 128), false);
+            TextView empty = label(emptyKeywordHint(kind), 12, Color.rgb(122, 132, 128), false);
             empty.setPadding(dp(2), dp(6), dp(2), dp(6));
             flow.addView(empty);
         } else {
             for (String keyword : keywords) {
-                flow.addView(keywordChip(keyword, local));
+                flow.addView(keywordChip(keyword, kind));
             }
         }
         keywordPanel.addView(flow, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
     }
 
-    private TextView keywordChip(String text, boolean local) {
-        TextView chip = label(text, 12, local ? Color.rgb(39, 91, 88) : Color.rgb(145, 100, 45), true);
+    private String emptyKeywordHint(int kind) {
+        if (kind == KEYWORD_CORRECTION) return "Run correction to see changed words";
+        if (kind == KEYWORD_SUMMARY) return "Run summary to get AI hotwords";
+        return "Waiting for ASR text";
+    }
+
+    private TextView keywordChip(String text, int kind) {
+        TextView chip = label(text, 12, keywordTextColor(kind), true);
         chip.setGravity(Gravity.CENTER);
         chip.setSingleLine(true);
         chip.setPadding(dp(10), dp(6), dp(10), dp(6));
         GradientDrawable bg = new GradientDrawable();
-        bg.setColor(local ? Color.rgb(226, 240, 235) : Color.rgb(250, 231, 204));
+        bg.setColor(keywordFillColor(kind));
         bg.setCornerRadius(dp(8));
-        bg.setStroke(dp(1), local ? Color.rgb(199, 225, 217) : Color.rgb(235, 203, 161));
+        bg.setStroke(dp(1), keywordStrokeColor(kind));
         chip.setBackground(bg);
         ViewGroup.MarginLayoutParams params = new ViewGroup.MarginLayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(32));
         params.setMargins(0, 0, dp(8), dp(8));
         chip.setLayoutParams(params);
         return chip;
+    }
+
+    private int keywordTextColor(int kind) {
+        if (kind == KEYWORD_CORRECTION) return Color.rgb(154, 43, 43);
+        if (kind == KEYWORD_SUMMARY) return Color.rgb(145, 100, 45);
+        return Color.rgb(39, 91, 88);
+    }
+
+    private int keywordFillColor(int kind) {
+        if (kind == KEYWORD_CORRECTION) return Color.rgb(253, 228, 226);
+        if (kind == KEYWORD_SUMMARY) return Color.rgb(250, 231, 204);
+        return Color.rgb(226, 240, 235);
+    }
+
+    private int keywordStrokeColor(int kind) {
+        if (kind == KEYWORD_CORRECTION) return Color.rgb(238, 187, 184);
+        if (kind == KEYWORD_SUMMARY) return Color.rgb(235, 203, 161);
+        return Color.rgb(199, 225, 217);
     }
 
     private View segmentView(TranscriptSegment segment) {
@@ -910,6 +989,18 @@ public class MainActivity extends AppCompatActivity {
         ));
         box.addView(space(4));
         box.addView(label(segment.text, 15, Color.rgb(24, 32, 31), false));
+        if (segment.correctionSummary != null && !segment.correctionSummary.trim().isEmpty()) {
+            TextView correction = label(segment.correctionSummary, 12, Color.rgb(154, 43, 43), true);
+            correction.setPadding(dp(10), dp(6), dp(10), dp(6));
+            GradientDrawable bg = new GradientDrawable();
+            bg.setColor(Color.rgb(253, 238, 236));
+            bg.setStroke(dp(1), Color.rgb(238, 187, 184));
+            bg.setCornerRadius(dp(8));
+            correction.setBackground(bg);
+            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            params.setMargins(0, dp(8), 0, 0);
+            box.addView(correction, params);
+        }
         return card;
     }
 

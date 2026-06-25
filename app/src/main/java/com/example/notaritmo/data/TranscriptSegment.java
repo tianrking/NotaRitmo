@@ -9,6 +9,9 @@ public class TranscriptSegment {
     public final String event;
     /** Mutable so the optional LLM post-correction pass (layer ④) can rewrite it in place. */
     public String text;
+    public String correctionBeforeText;
+    public String correctionAfterText;
+    public String correctionSummary;
     public final float confidence;
 
     public TranscriptSegment(
