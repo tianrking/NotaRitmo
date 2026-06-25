@@ -304,7 +304,13 @@ public class MainActivity extends AppCompatActivity {
         MaterialCardView card = card();
         LinearLayout box = cardBody();
         card.addView(box);
-        box.addView(label("Local library", 18, Color.rgb(24, 32, 31), true));
+        LinearLayout header = row();
+        TextView title = label("Local library", 18, Color.rgb(24, 32, 31), true);
+        header.addView(title, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        MaterialButton clear = compactButton("Clear audio");
+        clear.setOnClickListener(v -> clearSavedAudio());
+        header.addView(clear, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(34)));
+        box.addView(header);
         box.addView(space(8));
         library = new LinearLayout(this);
         library.setOrientation(LinearLayout.VERTICAL);
@@ -945,6 +951,60 @@ public class MainActivity extends AppCompatActivity {
         libraryItems.add(0, item);
     }
 
+    private void deleteLibraryItem(RecordingItem item) {
+        if (item == null) return;
+        if (realtimeAsrRunning && currentItem == item) {
+            Toast.makeText(this, "Stop live ASR before deleting this recording.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        boolean deletingCurrent = currentItem == item;
+        boolean deletedFile = deleteAudioFile(item.audioFile);
+        libraryItems.remove(item);
+        if (deletingCurrent) {
+            showNextLibraryItem();
+        } else {
+            renderCurrent();
+        }
+        Toast.makeText(this, deletedFile ? "Audio deleted." : "Session removed.", Toast.LENGTH_SHORT).show();
+    }
+
+    private void clearSavedAudio() {
+        if (realtimeAsrRunning) {
+            Toast.makeText(this, "Stop live ASR before clearing saved audio.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        int removed = 0;
+        for (int i = libraryItems.size() - 1; i >= 0; i--) {
+            RecordingItem item = libraryItems.get(i);
+            if (item.audioFile == null) continue;
+            deleteAudioFile(item.audioFile);
+            libraryItems.remove(i);
+            removed++;
+        }
+        if (currentItem != null && currentItem.audioFile != null) {
+            showNextLibraryItem();
+        } else {
+            renderCurrent();
+        }
+        Toast.makeText(this, removed == 0 ? "No saved audio to clear." : "Cleared " + removed + " saved audio item(s).", Toast.LENGTH_SHORT).show();
+    }
+
+    private void showNextLibraryItem() {
+        currentItem = libraryItems.isEmpty()
+                ? new RecordingItem(UUID.randomUUID().toString(), "Untitled recording", null)
+                : libraryItems.get(0);
+        if (libraryItems.isEmpty()) {
+            currentItem.status = "Ready";
+            currentItem.summary = "Waiting for local voice-core.";
+            upsertLibraryItem(currentItem);
+        }
+        renderCurrent();
+    }
+
+    private boolean deleteAudioFile(File file) {
+        return file != null && file.exists() && file.isFile() && file.delete();
+    }
+
     private void refreshLocalKeywords(RecordingItem item, String partialText) {
         if (item == null) return;
         StringBuilder text = new StringBuilder();
@@ -1108,6 +1168,13 @@ public class MainActivity extends AppCompatActivity {
                 transcribeImportedAudio(item, item.audioFile);
             });
             box.addView(transcribe, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(38)));
+            box.addView(space(6));
+            MaterialButton delete = compactButton("Delete audio");
+            delete.setOnClickListener(v -> {
+                clearInputFocusAndHideKeyboard();
+                deleteLibraryItem(item);
+            });
+            box.addView(delete, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(36)));
         }
         return box;
     }
@@ -1195,6 +1262,16 @@ public class MainActivity extends AppCompatActivity {
         button.setAllCaps(false);
         button.setCornerRadius(dp(8));
         button.setMinHeight(dp(42));
+        return button;
+    }
+
+    private MaterialButton compactButton(String text) {
+        MaterialButton button = button(text);
+        button.setTextSize(12);
+        button.setMinHeight(0);
+        button.setMinimumHeight(0);
+        button.setInsetTop(0);
+        button.setInsetBottom(0);
         return button;
     }
 
