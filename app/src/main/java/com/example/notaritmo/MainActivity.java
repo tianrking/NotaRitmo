@@ -224,7 +224,7 @@ public class MainActivity extends AppCompatActivity {
         card.addView(box);
         box.addView(label("Hotwords / glossary", 18, Color.rgb(24, 32, 31), true));
         box.addView(label("每行一个词。写  术语=误识1,误识2  可自动纠正误识。", 12, Color.rgb(92, 101, 98), false));
-        box.addView(label("解码期浅融合 ① + 本地词表替换 ⑤(始终生效);联网时还可点 LLM 纠错 ④。", 12, Color.rgb(92, 101, 98), false));
+        box.addView(label("本地词表替换始终生效；联网时还可点 LLM 纠错。", 12, Color.rgb(92, 101, 98), false));
         box.addView(space(8));
 
         hotwordsInput = new EditText(this);
@@ -681,7 +681,6 @@ public class MainActivity extends AppCompatActivity {
                 OfflineAudioTranscriber transcriber = new OfflineAudioTranscriber(getApplicationContext());
                 String rawHw = hotwordsInput.getText().toString();
                 savePrefs("hotwords", rawHw);
-                transcriber.setHotwords(canonicalHotwords(rawHw));
                 transcriber.setGlossaryText(rawHw);
                 OfflineTranscriptionResult result = transcriber.transcribe(Uri.fromFile(audioFile));
                 runOnUiThread(() -> {
@@ -935,9 +934,9 @@ public class MainActivity extends AppCompatActivity {
         return "NotaRitmo\nAndroid\nZipformer\nSenseVoice";
     }
 
-    /** Newline-joined canonical terms for native shallow-fusion hotwords (layer ①).
-     *  Strips any "=alias" suffix and comments so the glossary syntax never
-     *  reaches the decoder token table. */
+    /** Newline-joined canonical terms kept for session metadata. We do not feed
+     *  these terms into sherpa native createStream because this JNI build can
+     *  terminate the process for some hotword inputs. */
     private String canonicalHotwords(String raw) {
         StringBuilder out = new StringBuilder();
         for (String line : raw.split("\\R")) {

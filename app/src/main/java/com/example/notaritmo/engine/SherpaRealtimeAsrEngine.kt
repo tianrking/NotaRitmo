@@ -32,8 +32,10 @@ class SherpaRealtimeAsrEngine(
     private var worker: Thread? = null
 
     /**
-     * Hotwords captured from start() for native shallow-fusion biasing (layer ①)
-     * and forwarded to the SenseVoice refiner after stop.
+     * User glossary captured from start(). It is intentionally not passed to
+     * sherpa native createStream(): the bundled JNI exits the whole process
+     * with status 255 for some hotword inputs. Stable correction happens in
+     * LocalTermNormalizer and optional LLM correction instead.
      */
     private var hotwords: String = ""
 
@@ -88,15 +90,7 @@ class SherpaRealtimeAsrEngine(
                 listener.onReady(modelName)
                 recorder.startRecording()
 
-                // Layer ①: shallow-fusion hotwords. OOV/bad tokens can make the
-                // native createStream throw; fall back to a plain stream so the
-                // realtime session never crashes. Deterministic glossary
-                // correction (layer ⑤) still runs afterwards regardless.
-                val stream = try {
-                    recognizer!!.createStream(this.hotwords)
-                } catch (t: Throwable) {
-                    recognizer!!.createStream()
-                }
+                val stream = recognizer!!.createStream()
                 val buffer = ShortArray((sampleRate * 0.1).toInt())
 
                 while (running) {
@@ -182,7 +176,6 @@ class SherpaRealtimeAsrEngine(
 
     private fun refineIfPossible(buffer: PcmSessionBuffer) {
         val refiner = SherpaSenseVoiceRefiner(context)
-        refiner.hotwords = hotwords
         if (!refiner.isModelReady()) {
             buffer.delete()
             listener.onRefineSkipped(

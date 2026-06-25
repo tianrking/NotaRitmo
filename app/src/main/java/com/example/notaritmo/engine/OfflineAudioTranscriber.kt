@@ -12,15 +12,11 @@ class OfflineAudioTranscriber(
 ) {
     private val sampleRate = 16000
 
-    /** Layer ① hotwords forwarded to the SenseVoice refiner stream. */
-    var hotwords: String = ""
-
     /** Layer ⑤ domain glossary for deterministic post-decode correction. */
     var glossaryText: String = ""
 
     fun transcribe(uri: Uri): OfflineTranscriptionResult {
         val refiner = SherpaSenseVoiceRefiner(context)
-        refiner.hotwords = hotwords
         if (!refiner.isModelReady()) {
             throw IllegalStateException("SenseVoice refine model is missing")
         }

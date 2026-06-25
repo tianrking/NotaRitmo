@@ -15,12 +15,6 @@ class SherpaSenseVoiceRefiner(
         modelDir(context)
     }
 
-    /**
-     * Hotwords for native shallow-fusion biasing (layer ①). Newline-separated
-     * canonical terms; applied per-stream at decode time when non-empty.
-     */
-    var hotwords: String = ""
-
     fun isModelReady(): Boolean {
         return File(modelDir, "model.int8.onnx").isFile &&
             File(modelDir, "tokens.txt").isFile
@@ -50,15 +44,7 @@ class SherpaSenseVoiceRefiner(
 
         val recognizer = OfflineRecognizer(assetManager = null, config = config)
         return try {
-            // Layer ①: feed hotwords to the offline stream for CTC prefix
-            // biasing. A hotword whose tokens are out of vocabulary can make the
-            // native layer throw; fall back to a plain stream so refine still
-            // runs (the deterministic glossary layer ⑤ still corrects text).
-            val stream = try {
-                recognizer.createStream(hotwords)
-            } catch (t: Throwable) {
-                recognizer.createStream()
-            }
+            val stream = recognizer.createStream()
             try {
                 stream.acceptWaveform(samples, sampleRate)
                 recognizer.decode(stream)

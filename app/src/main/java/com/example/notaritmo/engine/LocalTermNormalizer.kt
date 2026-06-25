@@ -80,9 +80,8 @@ class LocalTermNormalizer {
      *   canonical=alias1,alias2,alias3
      * where the aliases are common mishearings that get rewritten to the
      * canonical form during normalization. Lines starting with '#' are ignored.
-     * This is the deterministic local post-decode biasing layer (layer ⑤);
-     * it runs without a network and complements the native shallow-fusion
-     * hotwords fed to the recognizer at decode time (layer ①).
+     * This is the deterministic local post-decode biasing layer; it runs
+     * without a network and is the stable on-device hotword path.
      */
     private val userRules = mutableListOf<TermRule>()
 
