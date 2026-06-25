@@ -520,6 +520,8 @@ public class MainActivity extends AppCompatActivity {
             Toast.makeText(this, "No finalized local ASR transcript yet.", Toast.LENGTH_SHORT).show();
             return;
         }
+        final RecordingItem targetItem = currentItem;
+        final String transcript = transcriptForLlm(targetItem);
         String apiBase = llmBaseInput.getText().toString().trim();
         String model = llmModelInput.getText().toString().trim();
         String apiKey = llmKeyInput.getText().toString().trim();
@@ -533,9 +535,10 @@ public class MainActivity extends AppCompatActivity {
         summaryText.setText("Calling LLM...");
         new Thread(() -> {
             try {
-                String result = new OpenAiCompatibleLlmClient().summarize(apiBase, apiKey, model, transcriptForLlm());
+                String result = new OpenAiCompatibleLlmClient().summarize(apiBase, apiKey, model, transcript);
                 runOnUiThread(() -> {
-                    currentItem.summary = result;
+                    if (currentItem != targetItem) return;
+                    targetItem.summary = result;
                     summaryText.setText(result);
                 });
             } catch (Exception ex) {
@@ -552,6 +555,7 @@ public class MainActivity extends AppCompatActivity {
             Toast.makeText(this, "No finalized local ASR transcript yet.", Toast.LENGTH_SHORT).show();
             return;
         }
+        final RecordingItem targetItem = currentItem;
         final String apiBase = llmBaseInput.getText().toString().trim();
         final String model = llmModelInput.getText().toString().trim();
         final String apiKey = llmKeyInput.getText().toString().trim();
@@ -564,8 +568,8 @@ public class MainActivity extends AppCompatActivity {
         savePrefs("llm_key", apiKey);
 
         final StringBuilder numbered = new StringBuilder();
-        for (int i = 0; i < currentItem.segments.size(); i++) {
-            numbered.append(i + 1).append(". ").append(currentItem.segments.get(i).text).append('\n');
+        for (int i = 0; i < targetItem.segments.size(); i++) {
+            numbered.append(i + 1).append(". ").append(targetItem.segments.get(i).text).append('\n');
         }
         final String glossary = hotwordsInput.getText().toString();
         savePrefs("hotwords", glossary);
@@ -573,15 +577,15 @@ public class MainActivity extends AppCompatActivity {
         new Thread(() -> {
             try {
                 final String out = new OpenAiCompatibleLlmClient().correct(apiBase, apiKey, model, numbered.toString(), glossary);
-                runOnUiThread(() -> applyCorrection(out));
+                runOnUiThread(() -> applyCorrection(targetItem, out));
             } catch (Exception ex) {
                 runOnUiThread(() -> summaryText.setText("LLM correction failed: " + ex.getMessage()));
             }
         }, "notaritmo-llm-correct").start();
     }
 
-    private void applyCorrection(String out) {
-        if (currentItem == null || currentItem.segments.isEmpty()) return;
+    private void applyCorrection(RecordingItem targetItem, String out) {
+        if (currentItem != targetItem || targetItem.segments.isEmpty()) return;
         java.util.Map<Integer, String> map = new java.util.HashMap<>();
         for (String line : out.split("\\R")) {
             String trimmed = line.trim();
@@ -602,14 +606,14 @@ public class MainActivity extends AppCompatActivity {
             return;
         }
         int updated = 0;
-        for (int i = 0; i < currentItem.segments.size(); i++) {
+        for (int i = 0; i < targetItem.segments.size(); i++) {
             String text = map.get(i);
             if (text != null) {
-                currentItem.segments.get(i).text = text;
+                targetItem.segments.get(i).text = text;
                 updated++;
             }
         }
-        currentItem.summary = "Transcript corrected with LLM against the domain glossary (" + updated + " segment(s) updated).";
+        targetItem.summary = "Transcript corrected with LLM against the domain glossary (" + updated + " segment(s) updated).";
         renderCurrent();
         Toast.makeText(this, "Corrected " + updated + " segment(s)", Toast.LENGTH_SHORT).show();
     }
@@ -666,13 +670,13 @@ public class MainActivity extends AppCompatActivity {
             currentItem.status = "Transcribing";
             currentItem.summary = "Imported audio is stored locally. Offline SenseVoice transcription is running.";
             renderCurrent();
-            transcribeImportedAudio(target);
+            transcribeImportedAudio(currentItem, target);
         } catch (Exception ex) {
             Toast.makeText(this, "Import failed: " + ex.getMessage(), Toast.LENGTH_LONG).show();
         }
     }
 
-    private void transcribeImportedAudio(File audioFile) {
+    private void transcribeImportedAudio(RecordingItem targetItem, File audioFile) {
         statusText.setText("Transcribing imported audio");
         stageText.setText("Local file decode -> speaker/VAD segments -> SenseVoice refine");
         progress.setProgress(64);
@@ -684,12 +688,12 @@ public class MainActivity extends AppCompatActivity {
                 transcriber.setGlossaryText(rawHw);
                 OfflineTranscriptionResult result = transcriber.transcribe(Uri.fromFile(audioFile));
                 runOnUiThread(() -> {
-                    if (currentItem == null) return;
-                    currentItem.segments.clear();
-                    currentItem.segments.addAll(result.getSegments());
-                    currentItem.durationLabel = result.getDurationLabel();
-                    currentItem.status = "Transcribed";
-                    currentItem.summary = result.getSummary();
+                    if (currentItem != targetItem) return;
+                    targetItem.segments.clear();
+                    targetItem.segments.addAll(result.getSegments());
+                    targetItem.durationLabel = result.getDurationLabel();
+                    targetItem.status = "Transcribed";
+                    targetItem.summary = result.getSummary();
                     statusText.setText("Imported audio transcribed offline");
                     stageText.setText("Offline file transcription complete");
                     progress.setProgress(100);
@@ -697,13 +701,13 @@ public class MainActivity extends AppCompatActivity {
                 });
             } catch (Exception ex) {
                 runOnUiThread(() -> {
-                    if (currentItem != null) {
-                        currentItem.status = "Imported";
-                        currentItem.summary = "Imported audio is stored locally.\n\nOffline transcription failed: " + ex.getMessage();
+                    if (currentItem == targetItem) {
+                        targetItem.status = "Imported";
+                        targetItem.summary = "Imported audio is stored locally.\n\nOffline transcription failed: " + ex.getMessage();
+                        statusText.setText("Imported audio stored");
+                        stageText.setText("Offline file transcription failed");
+                        renderCurrent();
                     }
-                    statusText.setText("Imported audio stored");
-                    stageText.setText("Offline file transcription failed");
-                    renderCurrent();
                     Toast.makeText(this, "File ASR failed: " + ex.getMessage(), Toast.LENGTH_LONG).show();
                 });
             }
@@ -914,9 +918,9 @@ public class MainActivity extends AppCompatActivity {
         return String.format(Locale.US, "%.1f MB", mb);
     }
 
-    private String transcriptForLlm() {
+    private String transcriptForLlm(RecordingItem item) {
         StringBuilder builder = new StringBuilder();
-        for (TranscriptSegment segment : currentItem.segments) {
+        for (TranscriptSegment segment : item.segments) {
             builder.append("[")
                     .append(segment.startLabel)
                     .append("-")
