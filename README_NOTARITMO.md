@@ -11,6 +11,7 @@ See `docs/ARCHITECTURE.md` for the module boundaries and runtime flow.
 - sherpa-onnx JNI libraries are packaged for `arm64-v8a`.
 - Streaming Zipformer runs locally through ONNX Runtime for low-latency text.
 - SenseVoice runs locally after stop to refine the final transcript.
+- Offline punctuation restores commas and periods for the final transcript.
 - LLM is intentionally external and not required for local ASR.
 
 ## Prepare the ASR model
@@ -25,7 +26,8 @@ the SenseVoice refine files into its own external files directory:
 
 After the download finishes, `Start live ASR` works fully offline. Zipformer
 shows text immediately while speaking; SenseVoice re-decodes the captured audio
-after stop and replaces the timeline with the refined final transcript.
+after stop, offline punctuation restores sentence punctuation, and the refined
+timeline replaces the realtime transcript.
 
 The downloader tries Hugging Face first and then `hf-mirror.com` as a fallback.
 

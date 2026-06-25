@@ -5,6 +5,7 @@ import android.content.Context;
 import com.example.notaritmo.data.RecordingItem;
 import com.example.notaritmo.data.TranscriptSegment;
 import com.example.notaritmo.engine.RealtimeAsrListener;
+import com.example.notaritmo.engine.SherpaPunctuationRestorer;
 import com.example.notaritmo.engine.SherpaRealtimeAsrEngine;
 
 import java.util.Locale;
@@ -98,6 +99,7 @@ public class VoiceSessionController {
             public void onRefined(String text, String lang, String emotion, String event) {
                 if (currentItem == null) return;
                 long elapsed = Math.max(1L, elapsedSeconds());
+                String finalText = new SherpaPunctuationRestorer(context).restore(text);
                 currentItem.segments.clear();
                 currentItem.segments.add(new TranscriptSegment(
                         "00:00",
@@ -105,12 +107,12 @@ public class VoiceSessionController {
                         "Speaker 1",
                         isBlank(lang) ? "SenseVoice" : lang,
                         isBlank(emotion) ? "Refined" : emotion,
-                        text,
+                        finalText,
                         0.96f
                 ));
                 currentItem.durationLabel = formatDuration(elapsed);
                 currentItem.status = "Refined";
-                currentItem.summary = "Final local SenseVoice transcript.\nLanguage: " + lang + "\nEmotion: " + emotion + "\nEvent: " + event;
+                currentItem.summary = "Final local SenseVoice transcript with offline punctuation.\nLanguage: " + lang + "\nEmotion: " + emotion + "\nEvent: " + event;
                 listener.onRefined(currentItem, lang, emotion, event);
             }
 

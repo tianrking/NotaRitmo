@@ -1,6 +1,7 @@
 package com.example.notaritmo.models
 
 import android.content.Context
+import com.example.notaritmo.engine.SherpaPunctuationRestorer
 import com.example.notaritmo.engine.SherpaRealtimeAsrEngine
 import com.example.notaritmo.engine.SherpaSenseVoiceRefiner
 
@@ -25,6 +26,14 @@ object VoiceModelRegistry {
                 files = listOf(
                     "model.int8.onnx",
                     "tokens.txt",
+                ),
+            ),
+            VoiceModelBundle(
+                label = "Punctuation",
+                repoName = SherpaPunctuationRestorer.MODEL_NAME,
+                modelDir = SherpaPunctuationRestorer.modelDir(context),
+                files = listOf(
+                    "model.onnx",
                 ),
             ),
         )
