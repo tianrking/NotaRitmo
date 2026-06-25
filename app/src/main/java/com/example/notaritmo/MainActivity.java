@@ -592,12 +592,13 @@ public class MainActivity extends AppCompatActivity {
             numbered.append(i + 1).append(". ").append(text).append('\n');
         }
         final String glossary = hotwordsText();
+        final String correctionContext = correctionContextForLlm(targetItem, localKeywords, glossary);
         savePrefs("hotwords", glossary);
         summaryText.setText("Correcting transcript with LLM...");
         new Thread(() -> {
             try {
                 OpenAiCompatibleLlmClient client = new OpenAiCompatibleLlmClient();
-                final String out = client.correct(apiBase, apiKey, model, numbered.toString(), glossary);
+                final String out = client.correct(apiBase, apiKey, model, numbered.toString(), glossary, correctionContext);
                 final Map<Integer, String> corrections = OpenAiCompatibleLlmClient.parseCorrectedLines(out);
                 String correctedTranscript = correctedTranscriptForKeywords(originalLines, corrections);
                 List<String> keywords = new ArrayList<>();
@@ -659,6 +660,40 @@ public class MainActivity extends AppCompatActivity {
                 text = originalLines.get(i);
             }
             builder.append(i + 1).append(". ").append(text).append('\n');
+        }
+        return builder.toString();
+    }
+
+    private String correctionContextForLlm(RecordingItem item, List<String> localKeywords, String glossary) {
+        StringBuilder builder = new StringBuilder();
+        builder.append("Recording title: ").append(fallback(item.title, "Untitled")).append('\n');
+        builder.append("Recording status: ").append(fallback(item.status, "Unknown")).append('\n');
+        builder.append("Duration: ").append(fallback(item.durationLabel, "Unknown")).append('\n');
+        builder.append("Glossary / hotwords:\n").append(fallback(glossary, "(none)")).append('\n');
+        builder.append("Local algorithm keywords: ").append(localKeywords == null || localKeywords.isEmpty() ? "(none)" : String.join(", ", localKeywords)).append('\n');
+        builder.append("Previous LLM keywords: ").append(item.llmKeywords.isEmpty() ? "(none)" : String.join(", ", item.llmKeywords)).append('\n');
+        builder.append("Current summary / state:\n").append(fallback(item.summary, "(none)")).append('\n');
+        builder.append("Timeline with metadata:\n");
+        for (int i = 0; i < item.segments.size(); i++) {
+            TranscriptSegment segment = item.segments.get(i);
+            builder.append(i + 1)
+                    .append(". [")
+                    .append(segment.startLabel)
+                    .append("-")
+                    .append(segment.endLabel)
+                    .append("] ")
+                    .append(fallback(segment.speaker, "Speaker"))
+                    .append(" / role=")
+                    .append(fallback(segment.role, "ASR"))
+                    .append(" / emotion=")
+                    .append(fallback(segment.emotion, "Neutral"))
+                    .append(" / event=")
+                    .append(fallback(segment.event, "Speech"))
+                    .append(" / confidence=")
+                    .append(Math.round(segment.confidence * 100))
+                    .append("%: ")
+                    .append(segment.text)
+                    .append('\n');
         }
         return builder.toString();
     }

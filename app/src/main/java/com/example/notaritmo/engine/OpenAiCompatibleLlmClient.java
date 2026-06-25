@@ -42,31 +42,44 @@ public class OpenAiCompatibleLlmClient {
      * while preserving the speaker's meaning and order.
      */
     public String correct(String apiBase, String apiKey, String model, String transcript, String glossary) throws Exception {
+        return correct(apiBase, apiKey, model, transcript, glossary, "");
+    }
+
+    public String correct(String apiBase, String apiKey, String model, String transcript, String glossary, String correctionContext) throws Exception {
         String glossaryBlock = (glossary == null || glossary.trim().isEmpty())
                 ? "(none)"
                 : glossary.trim();
+        String contextBlock = (correctionContext == null || correctionContext.trim().isEmpty())
+                ? "(none)"
+                : correctionContext.trim();
         return chat(
                 apiBase,
                 apiKey,
                 model,
                 "You are an expert ASR transcript correction engine for Mandarin/English mixed technical speech. "
-                        + "Input is numbered transcript lines. Correct obvious speech-recognition mistakes: homophones, "
+                        + "You must use the full session context before deciding each line correction. "
+                        + "First infer the domain, topic, likely glossary, product names, and repeated concepts from all context. "
+                        + "Then correct the numbered transcript lines. Correct obvious speech-recognition mistakes: homophones, "
                         + "wrong Chinese words, broken English product names, malformed technical terms, punctuation, and spacing. "
-                        + "Use the glossary as high-priority canonical spelling, but also infer corrections from context. "
+                        + "Use the glossary and local/LLM keywords as high-priority hints, but also infer corrections from surrounding lines, "
+                        + "speaker labels, timestamps, emotion/event tags, and repeated terms. "
+                        + "If a word is plausible in general but implausible in this session context, correct it to the contextually likely word. "
                         + "Preserve speaker meaning, language, tone, line order, and line count. Do not summarize. Do not add new facts. "
                         + "Return ONLY JSON with this exact shape: "
                         + "[{\"index\":1,\"text\":\"corrected line\"},{\"index\":2,\"text\":\"corrected line\"}]. "
                         + "Include every input line, even if unchanged. No Markdown, no explanation.",
                 "Glossary / canonical terms:\n" + glossaryBlock
+                        + "\n\nFull session context. Use all of it to disambiguate likely ASR mistakes:\n" + contextBlock
                         + "\n\nExamples of allowed ASR correction:\n"
                         + "notar rhythm -> NotaRitmo\n"
                         + "sense voice / sens voice -> SenseVoice\n"
                         + "zip former -> Zipformer\n"
                         + "fun as are -> FunASR\n"
-                        + "热刺 -> 热词, when the context is ASR hotwords\n"
+                        + "sports-team-like homophones -> hotwords, when the session context is ASR keywords/glossary\n"
+                        + "life separation -> speaker diarization, when the session context is ASR speaker labels\n"
                         + "key works / keyworsk -> keywords\n"
                         + "\nNow correct these numbered lines. Return JSON only:\n\n" + transcript,
-                2600
+                3200
         );
     }
 
