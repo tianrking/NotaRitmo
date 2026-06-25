@@ -75,8 +75,6 @@ public class MainActivity extends AppCompatActivity {
     private ProgressBar progress;
     private MaterialButton recordButton;
     private MaterialButton downloadModelButton;
-    private EditText hotwordsInput;
-    private EditText voiceprintNameInput;
     private EditText llmBaseInput;
     private EditText llmModelInput;
     private EditText llmKeyInput;
@@ -182,36 +180,13 @@ public class MainActivity extends AppCompatActivity {
         LinearLayout box = cardBody();
         card.addView(box);
         box.addView(label("Voice pipeline", 18, Color.rgb(24, 32, 31), true));
+        stageText = label("", 1, Color.TRANSPARENT, false);
         box.addView(space(12));
-        stageText = label(pipelineIdleText(), 13, Color.rgb(74, 84, 81), false);
-        stageText.setSingleLine(false);
-        stageText.setLineSpacing(dp(2), 1.0f);
-        box.addView(stageText);
-        box.addView(space(14));
 
         modelStatusList = new LinearLayout(this);
         modelStatusList.setOrientation(LinearLayout.VERTICAL);
         box.addView(modelStatusList);
-        box.addView(space(10));
-
-        hotwordsInput = input("Hotwords, e.g. NotaRitmo, Android, Zipformer");
-        hotwordsInput.setText(getPrefs("hotwords", "NotaRitmo\nAndroid\nZipformer\nSenseVoice"));
-        hotwordsInput.setSingleLine(false);
-        hotwordsInput.setMinLines(4);
-        hotwordsInput.setMaxLines(4);
-        hotwordsInput.setGravity(Gravity.TOP | Gravity.START);
-        box.addView(hotwordsInput, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(126)));
-        box.addView(space(14));
-
-        voiceprintNameInput = input("Voiceprint name");
-        voiceprintNameInput.setText(getPrefs("voiceprint_name", "Speaker"));
-        box.addView(voiceprintNameInput, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(50)));
-        box.addView(space(10));
-
-        MaterialButton enrollVoiceprint = button("Enroll voiceprint");
-        enrollVoiceprint.setOnClickListener(v -> enrollVoiceprint());
-        box.addView(enrollVoiceprint, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52)));
-        box.addView(space(14));
+        box.addView(space(12));
 
         progress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
         progress.setMax(100);
@@ -339,12 +314,10 @@ public class MainActivity extends AppCompatActivity {
         if (status.getReady()) {
             downloadModelButton.setText("ASR models scanned");
             statusText.setText("Local ASR models ready");
-            stageText.setText("Models found locally. Start live ASR when ready.");
             progress.setProgress(100);
         } else {
             downloadModelButton.setText("Download missing ASR models");
             statusText.setText("ASR models need download");
-            stageText.setText(compactModelStatus(status));
             progress.setProgress(0);
         }
     }
@@ -374,28 +347,12 @@ public class MainActivity extends AppCompatActivity {
         startLiveAsr(false);
     }
 
-    private void enrollVoiceprint() {
-        String name = voiceprintNameInput.getText().toString().trim();
-        if (name.isEmpty()) {
-            Toast.makeText(this, "Fill a voiceprint name first.", Toast.LENGTH_SHORT).show();
-            return;
-        }
-        savePrefs("voiceprint_name", name);
-        voiceSession.enrollNextRecording(name);
-        if (realtimeAsrRunning) {
-            Toast.makeText(this, "Voiceprint will enroll when this recording stops.", Toast.LENGTH_SHORT).show();
-            return;
-        }
-        startLiveAsr(true);
-    }
-
     private void startLiveAsr(boolean enrollingVoiceprint) {
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.RECORD_AUDIO}, REQ_AUDIO);
             return;
         }
-        savePrefs("hotwords", hotwordsInput.getText().toString());
-        voiceSession.setHotwords(formatHotwords(hotwordsInput.getText().toString()));
+        voiceSession.setHotwords(formatHotwords(defaultHotwords()));
         voiceSession.start();
         if (enrollingVoiceprint) {
             statusText.setText("Recording voiceprint sample");
@@ -472,7 +429,6 @@ public class MainActivity extends AppCompatActivity {
                     realtimeAsrRunning = false;
                     recordButton.setText("Start live ASR");
                     statusText.setText(hasTranscript ? "Realtime ASR stopped" : "Ready");
-                    stageText.setText(pipelineIdleText());
                 });
             }
 
@@ -493,8 +449,7 @@ public class MainActivity extends AppCompatActivity {
     public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
         if (requestCode == REQ_AUDIO && grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-            savePrefs("hotwords", hotwordsInput.getText().toString());
-            voiceSession.setHotwords(formatHotwords(hotwordsInput.getText().toString()));
+            voiceSession.setHotwords(formatHotwords(defaultHotwords()));
             voiceSession.start();
         }
     }
@@ -812,23 +767,8 @@ public class MainActivity extends AppCompatActivity {
         return builder.toString();
     }
 
-    private String pipelineIdleText() {
-        return "Zipformer realtime\nVAD / diarization\nSenseVoice refine\nPunctuation / voiceprint";
-    }
-
-    private String compactModelStatus(VoiceModelStatus status) {
-        int readyCount = 0;
-        StringBuilder missing = new StringBuilder();
-        for (VoiceModelBundle bundle : status.getBundles()) {
-            if (bundle.isReady()) {
-                readyCount++;
-            } else {
-                if (missing.length() > 0) missing.append(", ");
-                missing.append(bundle.getLabel());
-            }
-        }
-        return "ASR models missing (" + readyCount + "/" + status.getBundles().size() + " ready)"
-                + (missing.length() > 0 ? "\nMissing: " + missing : "");
+    private String defaultHotwords() {
+        return "NotaRitmo\nAndroid\nZipformer\nSenseVoice";
     }
 
     private String formatHotwords(String raw) {
