@@ -513,6 +513,25 @@ adb push .\models\sherpa-onnx-streaming-zipformer-zh-int8-2025-06-30 `
 
 ---
 
+## 🚀 发布 CI · Release CI
+
+推送 `v*` tag 会触发 GitHub Actions 自动构建测试包并创建 Release:
+
+```powershell
+git tag v0.0.1
+git push origin v0.0.1
+```
+
+CI 会执行单元测试，然后生成:
+
+- `NotaRitmo-<version>-arm64-v8a.apk`
+- `NotaRitmo-<version>-universal.apk`
+- `SHA256SUMS.txt`
+
+> 当前仓库只包含 `arm64-v8a` 的 sherpa-onnx / ONNX Runtime 原生库，所以 universal 包也只覆盖现有 arm64 native 能力。要真正支持 `armeabi-v7a`、`x86_64` 等架构，需要先补齐对应 ABI 的 `.so`。
+
+---
+
 ## 📜 许可证 · License
 
 本项目代码目前未声明开源许可证。如需使用,请联系仓库所有者 **[@tianrking](https://github.com/tianrking)**。

@@ -1,0 +1,117 @@
+name: Android Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version, for example v0.0.1"
+        required: true
+        default: "v0.0.1"
+
+permissions:
+  contents: write
+
+jobs:
+  build-release-apks:
+    name: Build release APKs
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Resolve version
+        id: version
+        shell: bash
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            VERSION="${GITHUB_REF_NAME}"
+          else
+            VERSION="${{ github.event.inputs.version }}"
+          fi
+          VERSION_NAME="${VERSION#v}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "version_name=${VERSION_NAME}" >> "$GITHUB_OUTPUT"
+
+      - name: Prepare Gradle wrapper
+        run: chmod +x ./gradlew
+
+      - name: Test
+        run: ./gradlew :app:testDebugUnitTest --no-configuration-cache
+
+      - name: Build ABI and universal APKs
+        run: |
+          ./gradlew :app:assembleDebug \
+            -PenableAbiSplits=true \
+            -PversionName="${{ steps.version.outputs.version_name }}" \
+            -PversionCode="${{ github.run_number }}" \
+            --no-configuration-cache
+
+      - name: Collect APKs
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.version.outputs.version }}"
+          mkdir -p release-apks
+
+          shopt -s nullglob
+          for APK in app/build/outputs/apk/debug/*.apk; do
+            NAME="$(basename "$APK")"
+            case "$NAME" in
+              *arm64-v8a*) SUFFIX="arm64-v8a" ;;
+              *universal*) SUFFIX="universal" ;;
+              *) SUFFIX="${NAME%.apk}" ;;
+            esac
+            cp "$APK" "release-apks/NotaRitmo-${VERSION}-${SUFFIX}.apk"
+          done
+
+          cd release-apks
+          sha256sum *.apk > SHA256SUMS.txt
+          ls -lh
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: NotaRitmo-${{ steps.version.outputs.version }}-apks
+          path: release-apks/*
+
+      - name: Write release notes
+        shell: bash
+        run: |
+          cat > RELEASE_NOTES.md <<'NOTES'
+          NotaRitmo Android test build.
+
+          APKs:
+          - `arm64-v8a`: recommended for modern Android phones.
+          - `universal`: includes all native ABIs currently packaged by the project. At the moment the repo ships arm64-v8a sherpa/ONNX native libraries, so wider ABI support requires adding matching native libraries first.
+
+          First run:
+          1. Install the APK.
+          2. Tap `Download ASR model`.
+          3. Wait until model status shows `Found`.
+          4. Use `Start live ASR` or `Import audio`.
+
+          Raw audio stays on device for ASR. Optional LLM actions send finalized text only.
+          NOTES
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ steps.version.outputs.version }}" \
+            release-apks/* \
+            --title "NotaRitmo ${{ steps.version.outputs.version }}" \
+            --notes-file RELEASE_NOTES.md \
+            --verify-tag

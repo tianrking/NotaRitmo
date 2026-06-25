@@ -11,6 +11,15 @@ val localProps = Properties().apply {
     }
 }
 
+val enableAbiSplits = providers.gradleProperty("enableAbiSplits")
+    .map { it.toBoolean() }
+    .orElse(false)
+val appVersionCode = providers.gradleProperty("versionCode")
+    .map { it.toInt() }
+    .orElse(1)
+val appVersionName = providers.gradleProperty("versionName")
+    .orElse("1.0")
+
 fun propOrEnv(name: String, fallback: String = ""): String {
     return localProps.getProperty(name)
         ?: System.getenv(name)
@@ -35,8 +44,8 @@ android {
         applicationId = "com.example.notaritmo"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = appVersionCode.get()
+        versionName = appVersionName.get()
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -64,6 +73,15 @@ android {
 
     buildFeatures {
         buildConfig = true
+    }
+
+    splits {
+        abi {
+            isEnable = enableAbiSplits.get()
+            reset()
+            include("arm64-v8a")
+            isUniversalApk = true
+        }
     }
 
     buildTypes {

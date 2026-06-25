@@ -16,5 +16,6 @@
 local.properties
 /models
 /third_party
+dist/
 /$dest
 *.part
