@@ -181,10 +181,12 @@ public class MainActivity extends AppCompatActivity {
         LinearLayout box = cardBody();
         card.addView(box);
         box.addView(label("Voice pipeline", 18, Color.rgb(24, 32, 31), true));
-        box.addView(space(8));
-        stageText = label("Zipformer realtime -> VAD/diarization -> SenseVoice refine -> punctuation", 13, Color.rgb(74, 84, 81), false);
+        box.addView(space(12));
+        stageText = label(pipelineIdleText(), 13, Color.rgb(74, 84, 81), false);
+        stageText.setSingleLine(false);
+        stageText.setLineSpacing(dp(2), 1.0f);
         box.addView(stageText);
-        box.addView(space(10));
+        box.addView(space(14));
 
         modelStatusList = new LinearLayout(this);
         modelStatusList.setOrientation(LinearLayout.VERTICAL);
@@ -362,7 +364,10 @@ public class MainActivity extends AppCompatActivity {
 
             if (!ready) {
                 String missing = "Missing: " + String.join(", ", bundle.missingFiles());
-                modelStatusList.addView(label(missing, 12, Color.rgb(113, 83, 73), false));
+                TextView missingText = label(missing, 11, Color.rgb(113, 83, 73), false);
+                missingText.setSingleLine(false);
+                missingText.setPadding(0, 0, 0, dp(6));
+                modelStatusList.addView(missingText);
             }
         }
     }
@@ -473,7 +478,7 @@ public class MainActivity extends AppCompatActivity {
                     realtimeAsrRunning = false;
                     recordButton.setText("Start live ASR");
                     statusText.setText(hasTranscript ? "Realtime ASR stopped" : "Ready");
-                    stageText.setText("Zipformer realtime -> VAD/diarization -> SenseVoice refine -> punctuation");
+                    stageText.setText(pipelineIdleText());
                 });
             }
 
@@ -800,6 +805,10 @@ public class MainActivity extends AppCompatActivity {
                     .append("\n");
         }
         return builder.toString();
+    }
+
+    private String pipelineIdleText() {
+        return "Zipformer realtime\nVAD / diarization\nSenseVoice refine\nPunctuation / voiceprint";
     }
 
     private String formatHotwords(String raw) {
