@@ -30,6 +30,7 @@ class OfflineAudioTranscriber(
 
         val punctuation = SherpaPunctuationRestorer(context)
         val voiceprints = LocalVoiceprintStore(context)
+        val terms = LocalTermNormalizer()
         val segments = refined.map { segment ->
             val match = voiceprints.search(segment.embedding, 0.58f)
             TranscriptSegment(
@@ -39,7 +40,7 @@ class OfflineAudioTranscriber(
                 segment.lang.ifEmpty { "SenseVoice" },
                 segment.emotion.ifEmpty { "Refined" },
                 segment.event.ifEmpty { "Speech" },
-                punctuation.restore(segment.text),
+                punctuation.restore(terms.normalize(segment.text)),
                 0.95f,
             )
         }

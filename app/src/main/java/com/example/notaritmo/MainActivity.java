@@ -603,11 +603,15 @@ public class MainActivity extends AppCompatActivity {
         top.addView(label(segment.startLabel + " - " + segment.endLabel, 12, Color.rgb(91, 100, 97), true), new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
         top.addView(label(Math.round(segment.confidence * 100) + "%", 12, Color.rgb(39, 91, 88), true));
         box.addView(top);
-        String meta = segment.speaker + " / " + segment.role + " / " + segment.emotion;
-        if (segment.event != null && !segment.event.isEmpty()) {
-            meta += " / " + segment.event;
-        }
+        String meta = segment.speaker + " / " + readableTag(segment.role, "SenseVoice");
         box.addView(label(meta, 13, Color.rgb(145, 100, 45), true));
+        box.addView(label(
+                "Emotion: " + readableTag(segment.emotion, "unknown")
+                        + "   Event: " + readableTag(segment.event, "speech"),
+                12,
+                Color.rgb(91, 100, 97),
+                false
+        ));
         box.addView(space(4));
         box.addView(label(segment.text, 15, Color.rgb(24, 32, 31), false));
         return card;
@@ -738,6 +742,15 @@ public class MainActivity extends AppCompatActivity {
     private String stripExt(String name) {
         int dot = name.lastIndexOf('.');
         return dot > 0 ? name.substring(0, dot) : name;
+    }
+
+    private String readableTag(String value, String fallback) {
+        if (value == null || value.trim().isEmpty()) return fallback;
+        String cleaned = value.replaceAll("[<>|]", "").trim();
+        if (cleaned.startsWith("EMO_")) {
+            cleaned = cleaned.substring(4).toLowerCase(Locale.US);
+        }
+        return cleaned.isEmpty() ? fallback : cleaned;
     }
 
     private String formatBytes(long bytes) {

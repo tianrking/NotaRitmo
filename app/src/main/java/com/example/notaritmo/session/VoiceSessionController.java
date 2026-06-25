@@ -4,6 +4,7 @@ import android.content.Context;
 
 import com.example.notaritmo.data.RecordingItem;
 import com.example.notaritmo.data.TranscriptSegment;
+import com.example.notaritmo.engine.LocalTermNormalizer;
 import com.example.notaritmo.engine.RealtimeAsrListener;
 import com.example.notaritmo.engine.RefinedTranscriptSegment;
 import com.example.notaritmo.engine.SherpaPunctuationRestorer;
@@ -22,6 +23,7 @@ public class VoiceSessionController {
 
     private SherpaRealtimeAsrEngine engine;
     private RecordingItem currentItem;
+    private final LocalTermNormalizer termNormalizer = new LocalTermNormalizer();
     private boolean running;
     private long startedAt;
     private String hotwords = "";
@@ -100,7 +102,7 @@ public class VoiceSessionController {
                         "Speaker 1",
                         "Realtime",
                         "Unrefined",
-                        text,
+                        termNormalizer.normalize(text),
                         0.90f
                 ));
                 currentItem.durationLabel = end;
@@ -118,7 +120,7 @@ public class VoiceSessionController {
             public void onRefined(String text, String lang, String emotion, String event) {
                 if (currentItem == null) return;
                 long elapsed = Math.max(1L, elapsedSeconds());
-                String finalText = new SherpaPunctuationRestorer(context).restore(text);
+                String finalText = new SherpaPunctuationRestorer(context).restore(termNormalizer.normalize(text));
                 currentItem.segments.clear();
                 currentItem.segments.add(new TranscriptSegment(
                         "00:00",
@@ -167,7 +169,7 @@ public class VoiceSessionController {
                             segment.getLang().isEmpty() ? "SenseVoice" : segment.getLang(),
                             segment.getEmotion().isEmpty() ? "Refined" : segment.getEmotion(),
                             segment.getEvent().isEmpty() ? "Speech" : segment.getEvent(),
-                            punctuation.restore(segment.getText()),
+                            punctuation.restore(termNormalizer.normalize(segment.getText())),
                             0.96f
                     ));
                 }
