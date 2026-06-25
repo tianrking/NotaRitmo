@@ -344,19 +344,16 @@ public class MainActivity extends AppCompatActivity {
             voiceSession.stop();
             return;
         }
-        startLiveAsr(false);
+        startLiveAsr();
     }
 
-    private void startLiveAsr(boolean enrollingVoiceprint) {
+    private void startLiveAsr() {
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.RECORD_AUDIO}, REQ_AUDIO);
             return;
         }
         voiceSession.setHotwords(formatHotwords(defaultHotwords()));
         voiceSession.start();
-        if (enrollingVoiceprint) {
-            statusText.setText("Recording voiceprint sample");
-        }
     }
 
     private VoiceSessionListener voiceSessionListener() {

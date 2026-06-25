@@ -81,7 +81,7 @@ class SherpaRealtimeAsrEngine(
                 listener.onReady(modelName)
                 recorder.startRecording()
 
-                val stream = recognizer!!.createStream(hotwords.trim())
+                val stream = recognizer!!.createStream()
                 val buffer = ShortArray((sampleRate * 0.1).toInt())
 
                 while (running) {

@@ -15,10 +15,12 @@ See `docs/ARCHITECTURE.md` for the module boundaries and runtime flow.
 - Silero VAD runs locally after stop to split captured speech before refinement.
 - sherpa-onnx speaker diarization runs locally when segmentation and embedding
   models are present.
-- Voiceprint enrollment and matching use the same local speaker embedding model.
+- Voiceprint matching uses the local speaker embedding model when enrolled
+  profiles exist.
 - SenseVoice runs locally after stop to refine the final transcript.
 - Offline punctuation restores commas and periods for the final transcript.
-- Local hotwords bias realtime ASR toward project names, people, and terms.
+- Hotword UI is intentionally hidden from the main resource panel until the
+  sherpa native hotword path is guarded safely.
 - SenseVoice language, emotion, and event tags are surfaced in the timeline.
 - LLM is intentionally external and not required for local ASR.
 
@@ -47,9 +49,9 @@ after stop. If speaker diarization models are present, the captured audio is
 split into speaker-aware segments. If they are missing but the VAD model is
 present, the captured audio is split into speech segments so silence is removed
 before SenseVoice runs. Offline punctuation restores sentence punctuation, and
-the refined timeline replaces the realtime transcript. Enter a name and tap
-`Enroll voiceprint` to record a local sample; later refined segments are matched
-against enrolled voiceprints on device.
+the refined timeline replaces the realtime transcript. Voiceprint matching is
+kept in the engine layer, but enrollment UI is intentionally not shown in the
+main resource panel.
 
 Imported audio files use the same local refine pipeline after Android decodes
 them to 16 kHz mono PCM. Supported file formats depend on the device codec
