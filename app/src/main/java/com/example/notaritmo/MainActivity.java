@@ -72,6 +72,7 @@ public class MainActivity extends AppCompatActivity {
     private ProgressBar progress;
     private MaterialButton recordButton;
     private MaterialButton downloadModelButton;
+    private EditText hotwordsInput;
     private EditText llmBaseInput;
     private EditText llmModelInput;
     private EditText llmKeyInput;
@@ -184,6 +185,13 @@ public class MainActivity extends AppCompatActivity {
         modelStatusList = new LinearLayout(this);
         modelStatusList.setOrientation(LinearLayout.VERTICAL);
         box.addView(modelStatusList);
+        box.addView(space(10));
+
+        hotwordsInput = input("Hotwords, e.g. NotaRitmo, Android, Zipformer");
+        hotwordsInput.setText(getPrefs("hotwords", "NotaRitmo\nAndroid\nZipformer\nSenseVoice"));
+        hotwordsInput.setSingleLine(false);
+        hotwordsInput.setMinLines(2);
+        box.addView(hotwordsInput);
         box.addView(space(10));
 
         progress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
@@ -353,6 +361,8 @@ public class MainActivity extends AppCompatActivity {
             ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.RECORD_AUDIO}, REQ_AUDIO);
             return;
         }
+        savePrefs("hotwords", hotwordsInput.getText().toString());
+        voiceSession.setHotwords(formatHotwords(hotwordsInput.getText().toString()));
         voiceSession.start();
     }
 
@@ -447,6 +457,8 @@ public class MainActivity extends AppCompatActivity {
     public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
         if (requestCode == REQ_AUDIO && grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+            savePrefs("hotwords", hotwordsInput.getText().toString());
+            voiceSession.setHotwords(formatHotwords(hotwordsInput.getText().toString()));
             voiceSession.start();
         }
     }
@@ -709,6 +721,18 @@ public class MainActivity extends AppCompatActivity {
                     .append(": ")
                     .append(segment.text)
                     .append("\n");
+        }
+        return builder.toString();
+    }
+
+    private String formatHotwords(String raw) {
+        String[] terms = raw.split("[,，\\n]");
+        StringBuilder builder = new StringBuilder();
+        for (String term : terms) {
+            String normalized = term.trim();
+            if (!normalized.isEmpty()) {
+                builder.append(normalized).append(":2.0\n");
+            }
         }
         return builder.toString();
     }

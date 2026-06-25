@@ -12,6 +12,7 @@ See `docs/ARCHITECTURE.md` for the module boundaries and runtime flow.
 - Streaming Zipformer runs locally through ONNX Runtime for low-latency text.
 - SenseVoice runs locally after stop to refine the final transcript.
 - Offline punctuation restores commas and periods for the final transcript.
+- Local hotwords bias realtime ASR toward project names, people, and terms.
 - LLM is intentionally external and not required for local ASR.
 
 ## Prepare the ASR model

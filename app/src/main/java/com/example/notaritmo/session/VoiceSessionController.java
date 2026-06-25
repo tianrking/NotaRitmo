@@ -19,6 +19,7 @@ public class VoiceSessionController {
     private RecordingItem currentItem;
     private boolean running;
     private long startedAt;
+    private String hotwords = "";
 
     public VoiceSessionController(Context context, VoiceSessionListener listener) {
         this.context = context.getApplicationContext();
@@ -42,13 +43,17 @@ public class VoiceSessionController {
         if (engine == null) {
             engine = new SherpaRealtimeAsrEngine(context, callbacks());
         }
-        engine.start();
+        engine.start(hotwords);
     }
 
     public void stop() {
         if (engine != null) {
             engine.stop();
         }
+    }
+
+    public void setHotwords(String hotwords) {
+        this.hotwords = hotwords == null ? "" : hotwords;
     }
 
     private RealtimeAsrListener callbacks() {

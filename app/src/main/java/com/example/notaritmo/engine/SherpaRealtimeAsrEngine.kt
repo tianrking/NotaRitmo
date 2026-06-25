@@ -40,7 +40,7 @@ class SherpaRealtimeAsrEngine(
 
     fun expectedModelPath(): String = modelDir.absolutePath
 
-    fun start() {
+    fun start(hotwords: String = "") {
         if (running) return
         if (!isModelReady()) {
             listener.onError(
@@ -81,7 +81,7 @@ class SherpaRealtimeAsrEngine(
                 listener.onReady(modelName)
                 recorder.startRecording()
 
-                val stream = recognizer!!.createStream()
+                val stream = recognizer!!.createStream(hotwords.trim())
                 val buffer = ShortArray((sampleRate * 0.1).toInt())
 
                 while (running) {
