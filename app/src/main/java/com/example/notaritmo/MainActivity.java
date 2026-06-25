@@ -47,6 +47,7 @@ import com.example.notaritmo.models.VoiceModelRegistry;
 import com.example.notaritmo.models.VoiceModelStatus;
 import com.example.notaritmo.session.VoiceSessionController;
 import com.example.notaritmo.session.VoiceSessionListener;
+import com.example.notaritmo.ui.KeywordFlowLayout;
 import com.google.android.material.button.MaterialButton;
 import com.google.android.material.card.MaterialCardView;
 
@@ -85,7 +86,6 @@ public class MainActivity extends AppCompatActivity {
     private EditText llmBaseInput;
     private EditText llmModelInput;
     private EditText llmKeyInput;
-    private EditText hotwordsInput;
 
     private boolean realtimeAsrRunning;
 
@@ -136,8 +136,6 @@ public class MainActivity extends AppCompatActivity {
         root.addView(buildRecorderCard());
         root.addView(space(14));
         root.addView(buildPipelineCard());
-        root.addView(space(14));
-        root.addView(buildHotwordsCard());
         root.addView(space(14));
         root.addView(buildTimelineCard());
         root.addView(space(14));
@@ -221,32 +219,6 @@ public class MainActivity extends AppCompatActivity {
             downloadAsrModel();
         });
         box.addView(downloadModelButton, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(44)));
-        return card;
-    }
-
-    private View buildHotwordsCard() {
-        MaterialCardView card = card();
-        LinearLayout box = cardBody();
-        card.addView(box);
-        box.addView(label("Hotwords / glossary", 18, Color.rgb(24, 32, 31), true));
-        box.addView(label("每行一个词。写  术语=误识1,误识2  可自动纠正误识。", 12, Color.rgb(92, 101, 98), false));
-        box.addView(label("本地词表替换始终生效；联网时还可点 LLM 纠错。", 12, Color.rgb(92, 101, 98), false));
-        box.addView(space(8));
-
-        hotwordsInput = new EditText(this);
-        hotwordsInput.setHint("NotaRitmo\nAndroid\nZipformer");
-        hotwordsInput.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE);
-        hotwordsInput.setSingleLine(false);
-        hotwordsInput.setMinLines(3);
-        hotwordsInput.setGravity(Gravity.TOP);
-        hotwordsInput.setTextSize(13);
-        hotwordsInput.setTypeface(android.graphics.Typeface.MONOSPACE);
-        hotwordsInput.setTextColor(Color.rgb(24, 32, 31));
-        hotwordsInput.setHintTextColor(Color.rgb(122, 132, 128));
-        hotwordsInput.setPadding(dp(12), dp(8), dp(12), dp(8));
-        hotwordsInput.setBackground(inputBackground());
-        hotwordsInput.setText(getPrefs("hotwords", defaultHotwords()));
-        box.addView(hotwordsInput, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(108)));
         return card;
     }
 
@@ -433,7 +405,7 @@ public class MainActivity extends AppCompatActivity {
 
     /** Push the hotwords/glossary field into the session (layer ① + ⑤) and persist it. */
     private void applyHotwordsToSession() {
-        String raw = hotwordsInput.getText().toString();
+        String raw = hotwordsText();
         savePrefs("hotwords", raw);
         voiceSession.setHotwords(canonicalHotwords(raw));
         voiceSession.setGlossary(raw);
@@ -615,7 +587,7 @@ public class MainActivity extends AppCompatActivity {
         for (int i = 0; i < targetItem.segments.size(); i++) {
             numbered.append(i + 1).append(". ").append(targetItem.segments.get(i).text).append('\n');
         }
-        final String glossary = hotwordsInput.getText().toString();
+        final String glossary = hotwordsText();
         savePrefs("hotwords", glossary);
         summaryText.setText("Correcting transcript with LLM...");
         new Thread(() -> {
@@ -747,7 +719,7 @@ public class MainActivity extends AppCompatActivity {
         new Thread(() -> {
             try {
                 OfflineAudioTranscriber transcriber = new OfflineAudioTranscriber(getApplicationContext());
-                String rawHw = hotwordsInput.getText().toString();
+                String rawHw = hotwordsText();
                 savePrefs("hotwords", rawHw);
                 transcriber.setGlossaryText(rawHw);
                 OfflineTranscriptionResult result = transcriber.transcribe(Uri.fromFile(audioFile));
@@ -818,7 +790,7 @@ public class MainActivity extends AppCompatActivity {
         item.localKeywords.clear();
         item.localKeywords.addAll(KeywordExtractor.extract(
                 text.toString(),
-                hotwordsInput == null ? "" : hotwordsInput.getText().toString(),
+                hotwordsText(),
                 12
         ));
     }
@@ -844,21 +816,18 @@ public class MainActivity extends AppCompatActivity {
 
     private void addKeywordGroup(String title, List<String> keywords, boolean local) {
         keywordPanel.addView(label(title, 12, Color.rgb(92, 101, 98), true));
-        HorizontalScrollView scroller = new HorizontalScrollView(this);
-        scroller.setHorizontalScrollBarEnabled(false);
-        LinearLayout row = new LinearLayout(this);
-        row.setOrientation(LinearLayout.HORIZONTAL);
-        scroller.addView(row);
+        KeywordFlowLayout flow = new KeywordFlowLayout(this);
+        flow.setPadding(0, dp(4), 0, 0);
         if (keywords == null || keywords.isEmpty()) {
             TextView empty = label(local ? "Waiting for ASR text" : "Run LLM summary or correction", 12, Color.rgb(122, 132, 128), false);
             empty.setPadding(dp(2), dp(6), dp(2), dp(6));
-            row.addView(empty);
+            flow.addView(empty);
         } else {
             for (String keyword : keywords) {
-                row.addView(keywordChip(keyword, local));
+                flow.addView(keywordChip(keyword, local));
             }
         }
-        keywordPanel.addView(scroller);
+        keywordPanel.addView(flow, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
     }
 
     private TextView keywordChip(String text, boolean local) {
@@ -871,8 +840,8 @@ public class MainActivity extends AppCompatActivity {
         bg.setCornerRadius(dp(8));
         bg.setStroke(dp(1), local ? Color.rgb(199, 225, 217) : Color.rgb(235, 203, 161));
         chip.setBackground(bg);
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(32));
-        params.setMarginEnd(dp(8));
+        ViewGroup.MarginLayoutParams params = new ViewGroup.MarginLayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(32));
+        params.setMargins(0, 0, dp(8), dp(8));
         chip.setLayoutParams(params);
         return chip;
     }
@@ -1075,6 +1044,10 @@ public class MainActivity extends AppCompatActivity {
 
     private String defaultHotwords() {
         return "NotaRitmo\nAndroid\nZipformer\nSenseVoice";
+    }
+
+    private String hotwordsText() {
+        return getPrefs("hotwords", defaultHotwords());
     }
 
     /** Newline-joined canonical terms kept for session metadata. We do not feed
