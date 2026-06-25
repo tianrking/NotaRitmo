@@ -8,6 +8,8 @@ See `docs/ARCHITECTURE.md` for the module boundaries and runtime flow.
 
 - Android native UI and microphone flow.
 - `AudioRecord` captures 16 kHz mono PCM.
+- Imported audio files are decoded locally with Android `MediaCodec` and then
+  transcribed offline.
 - sherpa-onnx JNI libraries are packaged for `arm64-v8a`.
 - Streaming Zipformer runs locally through ONNX Runtime for low-latency text.
 - Silero VAD runs locally after stop to split captured speech before refinement.
@@ -48,6 +50,10 @@ before SenseVoice runs. Offline punctuation restores sentence punctuation, and
 the refined timeline replaces the realtime transcript. Enter a name and tap
 `Enroll voiceprint` to record a local sample; later refined segments are matched
 against enrolled voiceprints on device.
+
+Imported audio files use the same local refine pipeline after Android decodes
+them to 16 kHz mono PCM. Supported file formats depend on the device codec
+stack, so WAV/M4A/MP3 support follows the Android system decoder.
 
 The downloader tries Hugging Face first and then `hf-mirror.com` as a fallback
 for model repositories. Direct sherpa-onnx release assets, such as Silero VAD,
@@ -137,6 +143,5 @@ The current speaker diarization models are:
 
 ## Next algorithm slots
 
-- Offline file ASR: reuse the SenseVoice refiner for imported files.
 - TTS: add sherpa-onnx TTS or Android system TTS.
 - LLM: call SaaS/private OpenAI-compatible endpoint with finalized transcript text only.

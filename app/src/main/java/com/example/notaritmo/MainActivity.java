@@ -33,6 +33,8 @@ import androidx.core.content.ContextCompat;
 import com.example.notaritmo.data.RecordingItem;
 import com.example.notaritmo.data.TranscriptSegment;
 import com.example.notaritmo.engine.ModelDownloadListener;
+import com.example.notaritmo.engine.OfflineAudioTranscriber;
+import com.example.notaritmo.engine.OfflineTranscriptionResult;
 import com.example.notaritmo.engine.OpenAiCompatibleLlmClient;
 import com.example.notaritmo.engine.SherpaModelDownloader;
 import com.example.notaritmo.models.VoiceModelBundle;
@@ -576,12 +578,48 @@ public class MainActivity extends AppCompatActivity {
                 }
             }
             currentItem = new RecordingItem(UUID.randomUUID().toString(), stripExt(name), target);
-            currentItem.status = "Imported";
-            currentItem.summary = "Imported audio is stored locally. File-refine support is the next pipeline slot.";
+            currentItem.status = "Transcribing";
+            currentItem.summary = "Imported audio is stored locally. Offline SenseVoice transcription is running.";
             renderCurrent();
+            transcribeImportedAudio(target);
         } catch (Exception ex) {
             Toast.makeText(this, "Import failed: " + ex.getMessage(), Toast.LENGTH_LONG).show();
         }
+    }
+
+    private void transcribeImportedAudio(File audioFile) {
+        statusText.setText("Transcribing imported audio");
+        stageText.setText("Local file decode -> speaker/VAD segments -> SenseVoice refine");
+        progress.setProgress(64);
+        new Thread(() -> {
+            try {
+                OfflineTranscriptionResult result = new OfflineAudioTranscriber(getApplicationContext())
+                        .transcribe(Uri.fromFile(audioFile));
+                runOnUiThread(() -> {
+                    if (currentItem == null) return;
+                    currentItem.segments.clear();
+                    currentItem.segments.addAll(result.getSegments());
+                    currentItem.durationLabel = result.getDurationLabel();
+                    currentItem.status = "Transcribed";
+                    currentItem.summary = result.getSummary();
+                    statusText.setText("Imported audio transcribed offline");
+                    stageText.setText("Offline file transcription complete");
+                    progress.setProgress(100);
+                    renderCurrent();
+                });
+            } catch (Exception ex) {
+                runOnUiThread(() -> {
+                    if (currentItem != null) {
+                        currentItem.status = "Imported";
+                        currentItem.summary = "Imported audio is stored locally.\n\nOffline transcription failed: " + ex.getMessage();
+                    }
+                    statusText.setText("Imported audio stored");
+                    stageText.setText("Offline file transcription failed");
+                    renderCurrent();
+                    Toast.makeText(this, "File ASR failed: " + ex.getMessage(), Toast.LENGTH_LONG).show();
+                });
+            }
+        }, "notaritmo-file-asr").start();
     }
 
     private void renderCurrent() {

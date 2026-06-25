@@ -26,12 +26,16 @@ only.
     enrollment and identity matching.
   - `SherpaSenseVoiceRefiner` runs offline SenseVoice refinement after stop.
   - `SherpaPunctuationRestorer` restores punctuation on finalized local text.
+  - `OfflineAudioTranscriber` reuses the local refine pipeline for imported
+    files.
   - `SherpaModelDownloader` prepares all local model families.
   - `OpenAiCompatibleLlmClient` calls an external LLM with finalized text.
 
 - `audio`
   - `PcmSessionBuffer` stores raw PCM in a temporary cache file while recording.
   - This keeps long sessions out of Java/Kotlin heap memory.
+  - `AndroidAudioDecoder` decodes imported audio files through Android system
+    codecs and resamples them to 16 kHz mono PCM.
 
 - `data`
   - `RecordingItem` and `TranscriptSegment` are the current UI/domain snapshot.
@@ -60,6 +64,15 @@ only.
 10. Speaker embeddings are matched against enrolled local voiceprints when the
     embedding model is present.
 11. LLM summarization can run against the final text only.
+
+## Imported File Flow
+
+1. User imports an audio file through Android document picker.
+2. The file is copied into app-private storage.
+3. `AndroidAudioDecoder` decodes it locally to 16 kHz mono PCM.
+4. `OfflineAudioTranscriber` runs diarization or VAD segmentation, SenseVoice,
+   punctuation, and voiceprint matching.
+5. The imported item timeline is replaced with the offline transcript.
 
 ## Reliability Rules
 
