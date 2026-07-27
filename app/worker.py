@@ -8,6 +8,7 @@ from app.workflows.ingest import (
     MeetingIngestWorkflow,
     extract_activity,
     graph_activity,
+    hera_outbox_activity,
     normalize_activity,
     prepare_audio_activity,
     transcribe_activity,
@@ -37,6 +38,7 @@ async def main() -> None:
             extract_activity,
             voiceprint_match_activity,
             graph_activity,
+            hera_outbox_activity,
         ],
     )
     await worker.run()

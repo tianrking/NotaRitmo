@@ -7,6 +7,7 @@ from typing import Any
 
 from neo4j import AsyncGraphDatabase
 
+from app.auth import current_tenant_id
 from app.config import settings
 from app.services.embeddings import embedding_service
 
@@ -72,6 +73,8 @@ class GraphMemory:
         segments = payload.get("transcript", [])
         memories = payload.get("memories", [])
         project_id = meeting.get("project_id") or "unassigned"
+        tenant_id = meeting["tenant_id"]
+        project_node_id = f"{tenant_id}:{project_id}"
         speakers: dict[str, dict[str, Any]] = {}
         for item in segments:
             speaker_id = item.get("speaker_id")
@@ -83,7 +86,10 @@ class GraphMemory:
                 }
         topics = [
             {
-                "key": f"{project_id}:{item.get('subject') or item['content']}".lower(),
+                "key": (
+                    f"{tenant_id}:{project_id}:"
+                    f"{item.get('subject') or item['content']}"
+                ).lower(),
                 "name": item.get("subject") or item["content"],
                 "memory_id": item["memory_id"],
             }
@@ -95,14 +101,18 @@ class GraphMemory:
                 """
                 MERGE (m:Meeting {id: $id})
                 SET m.title = $title, m.project_id = $project_id,
+                    m.tenant_id = $tenant_id,
                     m.created_at = $created_at, m.duration_ms = $duration_ms,
                     m.source_provider = $source_provider
-                MERGE (p:Project {id: $project_id})
+                MERGE (p:Project {id: $project_node_id})
+                SET p.project_id = $project_id, p.tenant_id = $tenant_id
                 MERGE (p)-[:HAS_MEETING]->(m)
                 """,
                 id=meeting["id"],
                 title=meeting["title"],
                 project_id=project_id,
+                project_node_id=project_node_id,
+                tenant_id=tenant_id,
                 created_at=meeting["created_at"],
                 duration_ms=meeting.get("duration_ms"),
                 source_provider=meeting.get("source_provider"),
@@ -127,10 +137,14 @@ class GraphMemory:
                     """
                     MATCH (m:Meeting {id: $meeting_id})
                     UNWIND $speakers AS row
-                    CREATE (s:Speaker {id: row.id, key: row.key, name: row.name})
+                    CREATE (s:Speaker {
+                        id: row.id, key: row.key, name: row.name,
+                        tenant_id: $tenant_id
+                    })
                     CREATE (m)-[:HAS_SPEAKER]->(s)
                     """,
                     meeting_id=meeting["id"],
+                    tenant_id=tenant_id,
                     speakers=list(speakers.values()),
                 )
             if segments:
@@ -140,7 +154,8 @@ class GraphMemory:
                     UNWIND $segments AS row
                     CREATE (s:Segment {
                         id: row.segment_id, text: row.text, start_ms: row.start_ms,
-                        end_ms: row.end_ms, ordinal: row.ordinal
+                        end_ms: row.end_ms, ordinal: row.ordinal,
+                        tenant_id: $tenant_id
                     })
                     CREATE (m)-[:HAS_SEGMENT]->(s)
                     WITH m, s, row
@@ -150,6 +165,7 @@ class GraphMemory:
                     )
                     """,
                     meeting_id=meeting["id"],
+                    tenant_id=tenant_id,
                     segments=[
                         {
                             **item,
@@ -166,7 +182,8 @@ class GraphMemory:
                     CREATE (memory:Memory {
                         id: row.memory_id, kind: row.kind, subject: row.subject,
                         text: row.content, status: row.status,
-                        valid_from: row.valid_from, valid_to: row.valid_to
+                        valid_from: row.valid_from, valid_to: row.valid_to,
+                        tenant_id: $tenant_id
                     })
                     CREATE (meeting)-[:HAS_MEMORY]->(memory)
                     WITH memory, row
@@ -178,6 +195,7 @@ class GraphMemory:
                     )
                     """,
                     meeting_id=meeting["id"],
+                    tenant_id=tenant_id,
                     memories=memories,
                 )
                 await session.run(
@@ -196,7 +214,8 @@ class GraphMemory:
                     MATCH (meeting:Meeting {id: $meeting_id})
                     UNWIND $topics AS row
                     MERGE (topic:Topic {key: row.key})
-                    SET topic.name = row.name, topic.project_id = $project_id
+                    SET topic.name = row.name, topic.project_id = $project_id,
+                        topic.tenant_id = $tenant_id
                     MERGE (meeting)-[:HAS_TOPIC]->(topic)
                     WITH topic, row
                     MATCH (memory:Memory {id: row.memory_id})
@@ -204,6 +223,7 @@ class GraphMemory:
                     """,
                     meeting_id=meeting["id"],
                     project_id=project_id,
+                    tenant_id=tenant_id,
                     topics=topics,
                 )
             for link in payload.get("memory_links", []):
@@ -284,13 +304,18 @@ class GraphMemory:
         self, query: str, *, project_id: str | None = None, limit: int = 50
     ) -> list[dict[str, Any]]:
         lowered = query.lower()
+        tenant_id = str(current_tenant_id())
+        project_node_id = f"{tenant_id}:{project_id}" if project_id else None
         async with self.driver.session() as session:
             result = await session.run(
                 """
                 MATCH (n)
                 WHERE (n:Meeting OR n:Memory OR n:Topic OR n:Segment OR n:Speaker)
+                  AND n.tenant_id = $tenant_id
                   AND ($project_id IS NULL OR n.project_id = $project_id
-                       OR EXISTS { MATCH (p:Project {id: $project_id})-[*1..2]-(n) })
+                       OR EXISTS {
+                         MATCH (p:Project {id: $project_node_id})-[*1..2]-(n)
+                       })
                   AND (
                     toLower(coalesce(n.title, '')) CONTAINS $search_text OR
                     toLower(coalesce(n.text, '')) CONTAINS $search_text OR
@@ -302,15 +327,18 @@ class GraphMemory:
                 """,
                 search_text=lowered,
                 project_id=project_id,
+                project_node_id=project_node_id,
+                tenant_id=tenant_id,
                 limit=limit,
             )
             return [record.data() async for record in result]
 
     async def meeting_graph(self, meeting_id: str) -> dict[str, Any]:
+        tenant_id = str(current_tenant_id())
         async with self.driver.session() as session:
             result = await session.run(
                 """
-                MATCH p=(m:Meeting {id: $meeting_id})-[*1..2]-(n)
+                MATCH p=(m:Meeting {id: $meeting_id, tenant_id: $tenant_id})-[*1..2]-(n)
                 UNWIND relationships(p) AS r
                 RETURN DISTINCT
                     elementId(startNode(r)) AS source_element_id,
@@ -324,6 +352,7 @@ class GraphMemory:
                 LIMIT 2000
                 """,
                 meeting_id=meeting_id,
+                tenant_id=tenant_id,
             )
             rows = [record.data() async for record in result]
         nodes: dict[str, dict[str, Any]] = {}

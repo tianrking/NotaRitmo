@@ -10,6 +10,7 @@ from temporalio import activity, workflow
 from temporalio.common import RetryPolicy
 
 with workflow.unsafe.imports_passed_through():
+    from app.auth import activate_internal_principal
     from app.db import SessionLocal
     from app.models import PipelineRun, PipelineStage
     from app.repository import (
@@ -24,8 +25,14 @@ with workflow.unsafe.imports_passed_through():
     from app.services.embeddings import embedding_service
     from app.services.extraction import extract_with_cache
     from app.services.graph_memory import ingest_episode
+    from app.services.hera import enqueue_meeting_intelligence
     from app.services.storage import provider_audio_url
     from app.services.voiceprint import match_meeting_speakers
+
+
+def _activate(payload: dict[str, str]) -> str:
+    activate_internal_principal(UUID(payload["tenant_id"]), UUID(payload["user_id"]))
+    return payload["meeting_id"]
 
 
 def _stage_start(db: Any, meeting: Any, stage_name: str) -> tuple[Any, Any]:
@@ -91,9 +98,10 @@ def _stage_fail(db: Any, meeting: Any, stage: Any, exc: Exception) -> None:
 
 
 @activity.defn
-async def prepare_audio_activity(meeting_id: str) -> dict[str, Any]:
+async def prepare_audio_activity(payload: dict[str, str]) -> dict[str, Any]:
     """Audio preflight is a separate durable stage; implementation lives in audio.py."""
 
+    meeting_id = _activate(payload)
     meeting_uuid = UUID(meeting_id)
     with SessionLocal() as db:
         meeting = get_meeting(db, meeting_uuid)
@@ -118,7 +126,8 @@ async def prepare_audio_activity(meeting_id: str) -> dict[str, Any]:
 
 
 @activity.defn
-async def transcribe_activity(meeting_id: str) -> dict[str, Any]:
+async def transcribe_activity(payload: dict[str, str]) -> dict[str, Any]:
+    meeting_id = _activate(payload)
     meeting_uuid = UUID(meeting_id)
     with SessionLocal() as db:
         meeting = get_meeting(db, meeting_uuid)
@@ -158,7 +167,8 @@ async def transcribe_activity(meeting_id: str) -> dict[str, Any]:
 
 
 @activity.defn
-async def normalize_activity(meeting_id: str) -> dict[str, Any]:
+async def normalize_activity(payload: dict[str, str]) -> dict[str, Any]:
+    meeting_id = _activate(payload)
     meeting_uuid = UUID(meeting_id)
     with SessionLocal() as db:
         meeting = get_meeting(db, meeting_uuid)
@@ -192,7 +202,8 @@ async def normalize_activity(meeting_id: str) -> dict[str, Any]:
 
 
 @activity.defn
-async def extract_activity(meeting_id: str) -> dict[str, Any]:
+async def extract_activity(payload: dict[str, str]) -> dict[str, Any]:
+    meeting_id = _activate(payload)
     meeting_uuid = UUID(meeting_id)
     with SessionLocal() as db:
         meeting = get_meeting(db, meeting_uuid)
@@ -223,7 +234,8 @@ async def extract_activity(meeting_id: str) -> dict[str, Any]:
 
 
 @activity.defn
-async def voiceprint_match_activity(meeting_id: str) -> dict[str, Any]:
+async def voiceprint_match_activity(payload: dict[str, str]) -> dict[str, Any]:
+    meeting_id = _activate(payload)
     meeting_uuid = UUID(meeting_id)
     with SessionLocal() as db:
         meeting = get_meeting(db, meeting_uuid)
@@ -244,7 +256,8 @@ async def voiceprint_match_activity(meeting_id: str) -> dict[str, Any]:
 
 
 @activity.defn
-async def graph_activity(meeting_id: str) -> dict[str, Any]:
+async def graph_activity(payload: dict[str, str]) -> dict[str, Any]:
+    meeting_id = _activate(payload)
     meeting_uuid = UUID(meeting_id)
     with SessionLocal() as db:
         meeting = get_meeting(db, meeting_uuid)
@@ -264,10 +277,8 @@ async def graph_activity(meeting_id: str) -> dict[str, Any]:
             meeting.graph_indexed_at = (
                 datetime.now(UTC) if result.get("indexed") else None
             )
-            meeting.status = "READY"
+            meeting.status = "GRAPH_READY"
             meeting.error = None
-            pipeline.status = "COMPLETED"
-            pipeline.completed_at = datetime.now(UTC)
             db.commit()
             output = {"status": "COMPLETED", **result}
             _stage_finish(db, stage, output)
@@ -281,10 +292,38 @@ async def graph_activity(meeting_id: str) -> dict[str, Any]:
             raise
 
 
+@activity.defn
+async def hera_outbox_activity(payload: dict[str, str]) -> dict[str, Any]:
+    meeting_id = _activate(payload)
+    meeting_uuid = UUID(meeting_id)
+    with SessionLocal() as db:
+        meeting = get_meeting(db, meeting_uuid)
+        if not meeting:
+            raise ValueError(f"meeting not found: {meeting_id}")
+        pipeline, stage = _stage_start(db, meeting, "hera_outbox")
+        try:
+            result = enqueue_meeting_intelligence(db, meeting)
+            meeting.status = "READY"
+            meeting.error = None
+            pipeline.status = "COMPLETED"
+            pipeline.completed_at = datetime.now(UTC)
+            db.commit()
+            output = {"status": "COMPLETED", **result}
+            _stage_finish(db, stage, output)
+            return output
+        except Exception as exc:
+            _stage_fail(db, meeting, stage, exc)
+            pipeline.status = "FAILED"
+            pipeline.completed_at = datetime.now(UTC)
+            db.commit()
+            raise
+
+
 @workflow.defn
 class MeetingIngestWorkflow:
     @workflow.run
-    async def run(self, meeting_id: str) -> dict[str, Any]:
+    async def run(self, payload: dict[str, str]) -> dict[str, Any]:
+        meeting_id = payload["meeting_id"]
         short_retry = RetryPolicy(
             initial_interval=timedelta(seconds=3),
             maximum_interval=timedelta(minutes=1),
@@ -297,38 +336,44 @@ class MeetingIngestWorkflow:
         )
         audio = await workflow.execute_activity(
             prepare_audio_activity,
-            meeting_id,
+            payload,
             start_to_close_timeout=timedelta(hours=1),
             retry_policy=short_retry,
         )
         transcription = await workflow.execute_activity(
             transcribe_activity,
-            meeting_id,
+            payload,
             start_to_close_timeout=timedelta(hours=6),
             retry_policy=network_retry,
         )
         canonical = await workflow.execute_activity(
             normalize_activity,
-            meeting_id,
+            payload,
             start_to_close_timeout=timedelta(hours=1),
             retry_policy=short_retry,
         )
         extraction = await workflow.execute_activity(
             extract_activity,
-            meeting_id,
+            payload,
             start_to_close_timeout=timedelta(hours=1),
             retry_policy=network_retry,
         )
         voiceprints = await workflow.execute_activity(
             voiceprint_match_activity,
-            meeting_id,
+            payload,
             start_to_close_timeout=timedelta(hours=1),
             retry_policy=short_retry,
         )
         graph = await workflow.execute_activity(
             graph_activity,
-            meeting_id,
+            payload,
             start_to_close_timeout=timedelta(hours=1),
+            retry_policy=short_retry,
+        )
+        hera = await workflow.execute_activity(
+            hera_outbox_activity,
+            payload,
+            start_to_close_timeout=timedelta(minutes=10),
             retry_policy=short_retry,
         )
         return {
@@ -340,4 +385,5 @@ class MeetingIngestWorkflow:
             "extraction": extraction,
             "voiceprints": voiceprints,
             "graph": graph,
+            "hera": hera,
         }

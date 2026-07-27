@@ -8,6 +8,7 @@ from typing import Any
 from sqlalchemy import delete, func, or_, select
 from sqlalchemy.orm import Session
 
+from app.auth import current_tenant_id, current_user_id
 from app.config import settings
 from app.models import (
     Artifact,
@@ -40,8 +41,8 @@ def create_meeting(
     user_id: uuid.UUID | None = None,
     denoise_enabled: bool | None = None,
 ) -> Meeting:
-    tenant_id = tenant_id or settings.default_tenant_id
-    user_id = user_id or settings.default_user_id
+    tenant_id = tenant_id or current_tenant_id()
+    user_id = user_id or current_user_id()
     meeting = Meeting(
         tenant_id=tenant_id,
         created_by=user_id,
@@ -85,8 +86,8 @@ def create_upload_session(
     tenant_id: uuid.UUID | None = None,
     user_id: uuid.UUID | None = None,
 ) -> UploadSession:
-    tenant_id = tenant_id or settings.default_tenant_id
-    user_id = user_id or settings.default_user_id
+    tenant_id = tenant_id or current_tenant_id()
+    user_id = user_id or current_user_id()
     upload_id = uuid.uuid4()
     safe_name = filename.replace("/", "_").replace("\\", "_")[:500] or "audio.bin"
     value = UploadSession(
@@ -116,8 +117,8 @@ def get_upload_session(db: Session, upload_id: uuid.UUID) -> UploadSession | Non
     return db.scalar(
         select(UploadSession).where(
             UploadSession.id == upload_id,
-            UploadSession.tenant_id == settings.default_tenant_id,
-            UploadSession.user_id == settings.default_user_id,
+            UploadSession.tenant_id == current_tenant_id(),
+            UploadSession.user_id == current_user_id(),
         )
     )
 
@@ -126,7 +127,7 @@ def get_meeting(db: Session, meeting_id: uuid.UUID) -> Meeting | None:
     return db.scalar(
         select(Meeting).where(
             Meeting.id == meeting_id,
-            Meeting.tenant_id == settings.default_tenant_id,
+            Meeting.tenant_id == current_tenant_id(),
         )
     )
 
@@ -135,13 +136,13 @@ def get_meeting_by_task_id(db: Session, task_id: str) -> Meeting | None:
     return db.scalar(
         select(Meeting).where(
             Meeting.source_task_id == task_id,
-            Meeting.tenant_id == settings.default_tenant_id,
+            Meeting.tenant_id == current_tenant_id(),
         )
     )
 
 
 def list_meetings(db: Session, project_id: str | None = None) -> list[Meeting]:
-    statement = select(Meeting).where(Meeting.tenant_id == settings.default_tenant_id)
+    statement = select(Meeting).where(Meeting.tenant_id == current_tenant_id())
     if project_id:
         statement = statement.where(Meeting.project_id == project_id)
     return list(db.scalars(statement.order_by(Meeting.created_at.desc())).all())
@@ -153,7 +154,7 @@ def meeting_pipeline_runs(db: Session, meeting_id: uuid.UUID) -> list[dict[str, 
             select(PipelineRun)
             .where(
                 PipelineRun.meeting_id == meeting_id,
-                PipelineRun.tenant_id == settings.default_tenant_id,
+                PipelineRun.tenant_id == current_tenant_id(),
             )
             .order_by(PipelineRun.started_at.desc())
         ).all()
@@ -596,7 +597,7 @@ def transcript(db: Session, meeting_id: uuid.UUID) -> list[dict[str, Any]]:
         select(Segment, Speaker)
         .outerjoin(Speaker, Segment.speaker_id == Speaker.id)
         .where(
-            Segment.tenant_id == settings.default_tenant_id,
+            Segment.tenant_id == current_tenant_id(),
             Segment.meeting_id == meeting_id,
         )
         .order_by(Segment.ordinal)
@@ -620,7 +621,7 @@ def transcript(db: Session, meeting_id: uuid.UUID) -> list[dict[str, Any]]:
         select(Word, Speaker)
         .outerjoin(Speaker, Word.speaker_id == Speaker.id)
         .where(
-            Word.tenant_id == settings.default_tenant_id,
+            Word.tenant_id == current_tenant_id(),
             Word.meeting_id == meeting_id,
         )
         .order_by(Word.ordinal)
@@ -648,7 +649,7 @@ def words(db: Session, meeting_id: uuid.UUID) -> list[dict[str, Any]]:
         select(Word, Speaker)
         .outerjoin(Speaker, Word.speaker_id == Speaker.id)
         .where(
-            Word.tenant_id == settings.default_tenant_id,
+            Word.tenant_id == current_tenant_id(),
             Word.meeting_id == meeting_id,
         )
         .order_by(Word.ordinal)
@@ -674,7 +675,7 @@ def artifacts(db: Session, meeting_id: uuid.UUID) -> dict[str, Any]:
     rows = db.scalars(
         select(Artifact)
         .where(
-            Artifact.tenant_id == settings.default_tenant_id,
+            Artifact.tenant_id == current_tenant_id(),
             Artifact.meeting_id == meeting_id,
         )
         .order_by(Artifact.kind)
@@ -695,7 +696,7 @@ def meeting_memories(db: Session, meeting_id: uuid.UUID) -> list[dict[str, Any]]
         select(MemoryRecord, Meeting)
         .join(Meeting, MemoryRecord.meeting_id == Meeting.id)
         .where(
-            MemoryRecord.tenant_id == settings.default_tenant_id,
+            MemoryRecord.tenant_id == current_tenant_id(),
             MemoryRecord.meeting_id == meeting_id,
         )
         .order_by(MemoryRecord.created_at, MemoryRecord.kind)
@@ -758,8 +759,8 @@ def search_memories(
         select(MemoryRecord, Meeting)
         .join(Meeting, MemoryRecord.meeting_id == Meeting.id)
         .where(
-            MemoryRecord.tenant_id == settings.default_tenant_id,
-            Meeting.tenant_id == settings.default_tenant_id,
+            MemoryRecord.tenant_id == current_tenant_id(),
+            Meeting.tenant_id == current_tenant_id(),
             Meeting.status == "READY",
         )
     )
@@ -862,7 +863,7 @@ def memory_timeline(
         select(MemoryRecord, Meeting)
         .join(Meeting, MemoryRecord.meeting_id == Meeting.id)
         .where(
-            MemoryRecord.tenant_id == settings.default_tenant_id,
+            MemoryRecord.tenant_id == current_tenant_id(),
             Meeting.status == "READY",
         )
     )
@@ -901,6 +902,7 @@ def meeting_report(db: Session, meeting_id: uuid.UUID) -> dict[str, Any] | None:
     return {
         "meeting": {
             "id": str(meeting.id),
+            "tenant_id": str(meeting.tenant_id),
             "title": meeting.title,
             "project_id": meeting.project_id,
             "status": meeting.status,
@@ -924,7 +926,7 @@ def scoped_analysis(
     time_to: datetime | None = None,
 ) -> dict[str, Any]:
     statement = select(Meeting).where(
-        Meeting.tenant_id == settings.default_tenant_id,
+        Meeting.tenant_id == current_tenant_id(),
         Meeting.status == "READY",
     )
     statement = _apply_scope(
@@ -995,8 +997,8 @@ def create_conversation(
     db: Session, *, title: str, scope: dict[str, Any]
 ) -> Conversation:
     conversation = Conversation(
-        tenant_id=settings.default_tenant_id,
-        user_id=settings.default_user_id,
+        tenant_id=current_tenant_id(),
+        user_id=current_user_id(),
         title=title,
         scope=scope,
     )
@@ -1010,8 +1012,8 @@ def list_conversations(db: Session) -> list[dict[str, Any]]:
     conversations = db.scalars(
         select(Conversation)
         .where(
-            Conversation.tenant_id == settings.default_tenant_id,
-            Conversation.user_id == settings.default_user_id,
+            Conversation.tenant_id == current_tenant_id(),
+            Conversation.user_id == current_user_id(),
         )
         .order_by(Conversation.updated_at.desc())
     ).all()
@@ -1031,8 +1033,8 @@ def get_conversation(db: Session, conversation_id: uuid.UUID) -> Conversation | 
     return db.scalar(
         select(Conversation).where(
             Conversation.id == conversation_id,
-            Conversation.tenant_id == settings.default_tenant_id,
-            Conversation.user_id == settings.default_user_id,
+            Conversation.tenant_id == current_tenant_id(),
+            Conversation.user_id == current_user_id(),
         )
     )
 
@@ -1103,8 +1105,8 @@ def search_segments(
         .join(Meeting, Segment.meeting_id == Meeting.id)
         .outerjoin(Speaker, Segment.speaker_id == Speaker.id)
         .where(
-            Segment.tenant_id == settings.default_tenant_id,
-            Meeting.tenant_id == settings.default_tenant_id,
+            Segment.tenant_id == current_tenant_id(),
+            Meeting.tenant_id == current_tenant_id(),
             Meeting.status == "READY",
         )
     )
@@ -1231,8 +1233,8 @@ def save_query_audit(
 ) -> None:
     db.add(
         QueryAudit(
-            tenant_id=settings.default_tenant_id,
-            user_id=settings.default_user_id,
+            tenant_id=current_tenant_id(),
+            user_id=current_user_id(),
             query=query,
             scope=scope,
             response=response,

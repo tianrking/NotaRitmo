@@ -47,6 +47,10 @@ class Settings(BaseSettings):
     public_api_base_url: str = "http://localhost:4200"
     provider_audio_secret: str = "change-provider-audio-secret"
     provider_audio_url_ttl_seconds: int = 86400
+    hera_auth_required: bool = False
+    hera_signing_secret: str = "change-hera-signing-secret"
+    hera_signature_max_skew_seconds: int = 300
+    hera_outbox_schema_version: str = "hera-meeting-intelligence-v1"
 
     tingwu_enabled: bool = False
     tingwu_app_key: str = ""

@@ -23,6 +23,11 @@ from sqlalchemy.orm import Session
 from temporalio.client import Client
 
 from app.config import settings
+from app.auth import (
+    current_tenant_id,
+    current_user_id,
+    hera_request_context,
+)
 from app.db import SessionLocal, get_db
 from app.repository import (
     append_conversation_exchange,
@@ -69,6 +74,7 @@ from app.services.agent import run_agent, scope_meeting_ids
 from app.services.embeddings import embedding_service
 from app.services.extraction import extraction_stats
 from app.services.graph_memory import graph_for_meeting, graph_health, graph_search
+from app.services.hera import acknowledge_event, pending_events
 from app.services.storage import (
     ensure_bucket,
     parse_minio_uri,
@@ -102,6 +108,7 @@ app = FastAPI(
     version=settings.app_version,
     description="Evidence-first single- and cross-meeting memory API.",
     lifespan=lifespan,
+    dependencies=[Depends(hera_request_context)],
 )
 
 
@@ -113,7 +120,11 @@ async def start_ingest(meeting_id: UUID) -> str:
     workflow_id = f"meeting-ingest-{meeting_id}-{uuid.uuid4().hex[:8]}"
     await client.start_workflow(
         MeetingIngestWorkflow.run,
-        str(meeting_id),
+        {
+            "meeting_id": str(meeting_id),
+            "tenant_id": str(current_tenant_id()),
+            "user_id": str(current_user_id()),
+        },
         id=workflow_id,
         task_queue=settings.temporal_task_queue,
     )
@@ -259,7 +270,7 @@ async def upload_audio(
     content = await file.read()
     temporary_id = uuid.uuid4()
     safe_name = (file.filename or "audio.bin").replace("/", "_").replace("\\", "_")
-    object_name = f"{settings.default_tenant_id}/{temporary_id}/{safe_name}"
+    object_name = f"{current_tenant_id()}/{temporary_id}/{safe_name}"
     internal_uri = put_bytes(
         object_name,
         content,
@@ -619,11 +630,39 @@ def all_extraction_usage(
     return extraction_stats(db)
 
 
+@app.get("/v1/hera/outbox")
+def hera_outbox_events(
+    db: Annotated[Session, Depends(get_db)],
+    limit: int = 100,
+) -> dict[str, Any]:
+    values = pending_events(
+        db,
+        tenant_id=current_tenant_id(),
+        limit=min(max(limit, 1), 500),
+    )
+    return {"count": len(values), "events": values}
+
+
+@app.post("/v1/hera/outbox/{event_id}/ack", status_code=status.HTTP_204_NO_CONTENT)
+def acknowledge_hera_outbox_event(
+    event_id: UUID,
+    db: Annotated[Session, Depends(get_db)],
+) -> Response:
+    if not acknowledge_event(
+        db,
+        event_id=event_id,
+        tenant_id=current_tenant_id(),
+        user_id=current_user_id(),
+    ):
+        raise HTTPException(status_code=404, detail="outbox event not found")
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
 @app.get("/v1/people")
 def voiceprint_people(
     db: Annotated[Session, Depends(get_db)],
 ) -> dict[str, Any]:
-    values = list_people(db, tenant_id=settings.default_tenant_id)
+    values = list_people(db, tenant_id=current_tenant_id())
     return {"count": len(values), "people": values}
 
 
@@ -639,8 +678,8 @@ def enroll_speaker_voiceprint(
             speaker_id=payload.speaker_id,
             person_id=payload.person_id,
             display_name=payload.display_name,
-            tenant_id=settings.default_tenant_id,
-            user_id=settings.default_user_id,
+            tenant_id=current_tenant_id(),
+            user_id=current_user_id(),
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -650,14 +689,14 @@ def enroll_speaker_voiceprint(
 def scan_cross_meeting_voiceprints(
     db: Annotated[Session, Depends(get_db)],
 ) -> dict[str, Any]:
-    return match_tenant_speakers(db, tenant_id=settings.default_tenant_id)
+    return match_tenant_speakers(db, tenant_id=current_tenant_id())
 
 
 @app.get("/v1/voiceprints/candidates")
 def voiceprint_candidates(
     db: Annotated[Session, Depends(get_db)],
 ) -> dict[str, Any]:
-    values = list_candidates(db, tenant_id=settings.default_tenant_id)
+    values = list_candidates(db, tenant_id=current_tenant_id())
     return {"count": len(values), "candidates": values}
 
 
@@ -672,8 +711,8 @@ def confirm_voiceprint_candidate(
             db,
             candidate_id=candidate_id,
             accept=payload.accept,
-            tenant_id=settings.default_tenant_id,
-            user_id=settings.default_user_id,
+            tenant_id=current_tenant_id(),
+            user_id=current_user_id(),
         )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -685,7 +724,7 @@ def remove_voiceprint_profile(
     db: Annotated[Session, Depends(get_db)],
 ) -> Response:
     if not delete_voiceprint_profile(
-        db, profile_id=profile_id, tenant_id=settings.default_tenant_id
+        db, profile_id=profile_id, tenant_id=current_tenant_id()
     ):
         raise HTTPException(status_code=404, detail="voiceprint profile not found")
     return Response(status_code=status.HTTP_204_NO_CONTENT)
@@ -696,7 +735,7 @@ def remove_person_and_voiceprints(
     person_id: UUID,
     db: Annotated[Session, Depends(get_db)],
 ) -> Response:
-    if not delete_person(db, person_id=person_id, tenant_id=settings.default_tenant_id):
+    if not delete_person(db, person_id=person_id, tenant_id=current_tenant_id()):
         raise HTTPException(status_code=404, detail="person not found")
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
