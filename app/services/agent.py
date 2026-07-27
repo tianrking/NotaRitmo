@@ -40,11 +40,22 @@ def scope_meeting_ids(scope: dict[str, Any]) -> list[UUID]:
 
 
 def _intent(query: str) -> str:
+    structured_groups = (
+        ("decisions", ("决定", "决策", "结论", "最终方案", "发布方案", "采用什么")),
+        ("action_items", ("待办", "行动项", "谁负责", "任务", "截止")),
+        ("risks", ("风险", "阻塞", "隐患")),
+        ("open_questions", ("未决", "待确认", "还没定")),
+    )
+    matched_groups = [
+        name for name, markers in structured_groups if any(marker in query for marker in markers)
+    ]
+    if len(matched_groups) >= 2:
+        return "meeting_intelligence"
     rules = (
         ("overall_summary", ("所有会议", "全部会议", "整体总结", "跨会议总结", "几场会议总结")),
         ("meeting_summary", ("总结", "摘要", "讲了什么", "说了什么")),
         ("action_items", ("待办", "行动项", "谁负责", "任务", "截止")),
-        ("decisions", ("决定", "决策", "结论", "最终方案")),
+        ("decisions", ("决定", "决策", "结论", "最终方案", "发布方案", "采用什么")),
         ("risks", ("风险", "阻塞", "隐患")),
         ("open_questions", ("未决", "待确认", "问题", "还没定")),
         ("locate", ("哪场会议", "哪个会议", "找到会议", "定位会议")),
@@ -99,6 +110,27 @@ def _deterministic_answer(state: AgentState) -> str:
             f"{index + 1}. {item['title']}：{item['summary'] or '暂无摘要'}"
             for index, item in enumerate(summaries)
         )
+    if intent == "meeting_intelligence":
+        sections = []
+        for title, kind, analysis_key in (
+            ("决策", "decision", "decisions"),
+            ("风险", "risk", "risks"),
+            ("待办", "action_item", "action_items"),
+            ("未决问题", "open_question", "open_questions"),
+        ):
+            items = [item for item in memories if item["kind"] == kind]
+            if not items:
+                items = analysis[analysis_key]
+            if not items:
+                continue
+            lines = [
+                f"{index + 1}. [{item['meeting_title']}] {item['content']}"
+                + (f"（负责人：{item['subject']}）" if item.get("subject") else "")
+                + f"；状态：{item['status']}"
+                for index, item in enumerate(items[:20])
+            ]
+            sections.append(f"{title}：\n" + "\n".join(lines))
+        return "\n\n".join(sections) or "当前范围内没有找到结构化会议情报。"
     kind_by_intent = {
         "action_items": "action_item",
         "decisions": "decision",

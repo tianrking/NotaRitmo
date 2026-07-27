@@ -157,6 +157,9 @@ def main() -> None:
     assert answer["citations"], answer
     assert answer["verification"]["grounded"], answer
     assert not answer["verification"]["unresolved_memory_evidence"], answer
+    assert "灰度" in answer["answer"], answer
+    assert "低电量" in answer["answer"], answer
+    assert any(owner in answer["answer"] for owner in ("王五", "李四")), answer
 
     conversation = request(
         "POST",
