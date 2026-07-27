@@ -1,0 +1,85 @@
+{
+  "title": "K6 OTA灰度发布评审",
+  "project_id": "k6",
+  "audio_uri": "https://example.invalid/k6-ota-03.m4a",
+  "source_language": "cn",
+  "raw_result": {
+    "Transcription": {
+      "TaskId": "fixture-task-03",
+      "Transcription": {
+        "AudioInfo": {
+          "Size": 3145728,
+          "Duration": 300000,
+          "SampleRate": 16000,
+          "Language": "cn"
+        },
+        "Paragraphs": [
+          {
+            "ParagraphId": "p1",
+            "SpeakerId": "1",
+            "Words": [
+              {"Id": 1, "SentenceId": 1, "Start": 1000, "End": 4500, "Text": "Android重连测试已经覆盖十二款主流机型。"},
+              {"Id": 2, "SentenceId": 2, "Start": 4800, "End": 8500, "Text": "最终决定首版升级策略调整为灰度分包发布。"}
+            ]
+          },
+          {
+            "ParagraphId": "p2",
+            "SpeakerId": "2",
+            "Words": [
+              {"Id": 3, "SentenceId": 3, "Start": 9000, "End": 12800, "Text": "灰度阶段存在低电量设备升级中断的风险。"},
+              {"Id": 4, "SentenceId": 4, "Start": 13200, "End": 17000, "Text": "王五负责八月十日前完成低电量保护测试。"}
+            ]
+          },
+          {
+            "ParagraphId": "p3",
+            "SpeakerId": "3",
+            "Words": [
+              {"Id": 5, "SentenceId": 5, "Start": 17500, "End": 21000, "Text": "正式发布比例是否从百分之十开始还待确认？"},
+              {"Id": 6, "SentenceId": 6, "Start": 21500, "End": 25000, "Text": "李四继续跟进固件回滚监控和告警。"}
+            ]
+          }
+        ],
+        "AudioSegments": [[1000, 25000]]
+      }
+    },
+    "Summarization": {
+      "Summarization": {
+        "ParagraphSummary": "会议决定K6首版采用灰度分包发布，重点验证低电量保护，并保留发布比例待确认事项。",
+        "MindMap": {
+          "name": "K6灰度发布",
+          "children": [
+            {"name": "发布策略", "children": [{"name": "灰度分包", "children": []}]},
+            {"name": "质量风险", "children": [{"name": "低电量中断", "children": []}]},
+            {"name": "未决事项", "children": [{"name": "首批比例", "children": []}]}
+          ]
+        }
+      }
+    },
+    "AutoChapters": {
+      "AutoChapters": {
+        "Chapters": [
+          {"Title": "验证结果与发布决策", "Summary": "重连验证通过并确定灰度分包策略。", "Start": 1000, "End": 8500},
+          {"Title": "风险与待办", "Summary": "识别低电量风险并分配保护测试任务。", "Start": 9000, "End": 25000}
+        ]
+      }
+    },
+    "MeetingAssistance": {
+      "MeetingAssistance": {
+        "Keywords": [
+          {"Text": "灰度发布", "Count": 4, "Weight": 1.0},
+          {"Text": "分包升级", "Count": 3, "Weight": 0.9},
+          {"Text": "低电量保护", "Count": 2, "Weight": 0.8},
+          {"Text": "回滚监控", "Count": 2, "Weight": 0.7}
+        ],
+        "Actions": [
+          {"Task": "完成低电量保护测试", "Owner": "王五", "DueDate": "2026-08-10"},
+          {"Task": "配置固件回滚监控和告警", "Owner": "李四", "DueDate": "2026-08-12"}
+        ],
+        "KeyInformation": [
+          {"Text": "首版升级策略调整为灰度分包发布", "Start": 4800, "End": 8500},
+          {"Text": "发布比例仍待确认", "Start": 17500, "End": 21000}
+        ]
+      }
+    }
+  }
+}

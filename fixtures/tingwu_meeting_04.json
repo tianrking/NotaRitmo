@@ -1,0 +1,84 @@
+{
+  "title": "NotaRitmo会议记忆架构评审",
+  "project_id": "notaritmo",
+  "audio_uri": "https://example.invalid/notaritmo-architecture-01.m4a",
+  "source_language": "cn",
+  "raw_result": {
+    "Transcription": {
+      "TaskId": "fixture-task-04",
+      "Transcription": {
+        "AudioInfo": {
+          "Size": 4194304,
+          "Duration": 360000,
+          "SampleRate": 16000,
+          "Language": "cn"
+        },
+        "Paragraphs": [
+          {
+            "ParagraphId": "p1",
+            "SpeakerId": "1",
+            "Words": [
+              {"Id": 1, "SentenceId": 1, "Start": 1000, "End": 5000, "Text": "我们确定Android应用只调用NotaRitmo后端，不直接连接听悟。"},
+              {"Id": 2, "SentenceId": 2, "Start": 5500, "End": 9500, "Text": "听悟输出作为可替换的上游会议数据源。"}
+            ]
+          },
+          {
+            "ParagraphId": "p2",
+            "SpeakerId": "2",
+            "Words": [
+              {"Id": 3, "SentenceId": 3, "Start": 10000, "End": 14500, "Text": "PostgreSQL保存事实和权限，Neo4j保存跨会议关系。"},
+              {"Id": 4, "SentenceId": 4, "Start": 15000, "End": 19500, "Text": "陈工负责完成四会议证据回溯验收。"}
+            ]
+          },
+          {
+            "ParagraphId": "p3",
+            "SpeakerId": "3",
+            "Words": [
+              {"Id": 5, "SentenceId": 5, "Start": 20000, "End": 24500, "Text": "当前风险是小模型生成摘要时可能遗漏责任人。"},
+              {"Id": 6, "SentenceId": 6, "Start": 25000, "End": 29500, "Text": "是否启用Graphiti的大模型增强还待确认？"}
+            ]
+          }
+        ],
+        "AudioSegments": [[1000, 29500]]
+      }
+    },
+    "Summarization": {
+      "Summarization": {
+        "ParagraphSummary": "会议确定Android只接入NotaRitmo后端，由PostgreSQL和Neo4j承载可回溯的单会及跨会记忆。",
+        "MindMap": {
+          "name": "NotaRitmo架构",
+          "children": [
+            {"name": "客户端边界", "children": [{"name": "只调用NotaRitmo", "children": []}]},
+            {"name": "事实存储", "children": [{"name": "PostgreSQL", "children": []}]},
+            {"name": "关系记忆", "children": [{"name": "Neo4j", "children": []}]}
+          ]
+        }
+      }
+    },
+    "AutoChapters": {
+      "AutoChapters": {
+        "Chapters": [
+          {"Title": "客户端与供应商解耦", "Summary": "Android只访问NotaRitmo，听悟作为上游适配器。", "Start": 1000, "End": 9500},
+          {"Title": "记忆与验收", "Summary": "定义事实库、关系图和四会议验收任务。", "Start": 10000, "End": 29500}
+        ]
+      }
+    },
+    "MeetingAssistance": {
+      "MeetingAssistance": {
+        "Keywords": [
+          {"Text": "NotaRitmo", "Count": 5, "Weight": 1.0},
+          {"Text": "会议记忆", "Count": 4, "Weight": 0.9},
+          {"Text": "证据回溯", "Count": 3, "Weight": 0.8},
+          {"Text": "Neo4j", "Count": 2, "Weight": 0.7}
+        ],
+        "Actions": [
+          {"Task": "完成四会议证据回溯验收", "Owner": "陈工", "DueDate": "2026-08-05"}
+        ],
+        "KeyInformation": [
+          {"Text": "Android应用只调用NotaRitmo后端", "Start": 1000, "End": 5000},
+          {"Text": "PostgreSQL保存事实和权限", "Start": 10000, "End": 14500}
+        ]
+      }
+    }
+  }
+}
