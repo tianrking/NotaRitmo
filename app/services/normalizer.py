@@ -535,15 +535,16 @@ def normalize_tingwu(bundle: dict[str, Any]) -> dict[str, Any]:
                 }
             )
     for item in keywords[:15]:
+        topic_evidence = _evidence_ordinals(segments, text=item["text"], limit=5)
+        if not topic_evidence:
+            continue
         memories.append(
             {
                 "kind": "topic",
                 "subject": item["text"],
                 "content": item["text"],
                 "status": "observed",
-                "evidence_ordinals": _evidence_ordinals(
-                    segments, text=item["text"], limit=5
-                ),
+                "evidence_ordinals": topic_evidence,
                 "extractor": {
                     "name": "tingwu+local-keywords",
                     "version": "2",
