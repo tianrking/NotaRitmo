@@ -17,7 +17,16 @@ x-app: &app
 services:
   model-init:
     image: alpine:3.22
-    command: ["sh", "-c", "mkdir -p /models/fastembed && chown -R 10001:10001 /models"]
+    command:
+      - sh
+      - -c
+      - >-
+        mkdir -p /models/fastembed /models/speaker &&
+        if [ ! -s /models/speaker/3dspeaker_speech_campplus_sv_zh-cn_16k-common.onnx ]; then
+          wget -q -O /models/speaker/3dspeaker_speech_campplus_sv_zh-cn_16k-common.onnx
+          https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/3dspeaker_speech_campplus_sv_zh-cn_16k-common.onnx;
+        fi &&
+        chown -R 10001:10001 /models
     volumes:
       - meeting-models:/models
     restart: "no"

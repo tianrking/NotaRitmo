@@ -27,6 +27,16 @@ class Settings(BaseSettings):
     audio_denoise_default: bool = False
     ffmpeg_binary: str = "ffmpeg"
     ffprobe_binary: str = "ffprobe"
+    speaker_embedding_enabled: bool = True
+    speaker_embedding_model: str = (
+        "/models/speaker/3dspeaker_speech_campplus_sv_zh-cn_16k-common.onnx"
+    )
+    speaker_embedding_model_version: str = "3dspeaker-campplus-16k-v1"
+    speaker_embedding_dimensions: int = 192
+    speaker_embedding_threads: int = 2
+    speaker_match_threshold: float = 0.62
+    speaker_min_enrollment_ms: int = 3000
+    speaker_max_sample_ms: int = 60000
 
     temporal_address: str = "temporal:7233"
     temporal_namespace: str = "default"

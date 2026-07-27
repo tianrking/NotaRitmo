@@ -25,6 +25,7 @@ with workflow.unsafe.imports_passed_through():
     from app.services.extraction import extract_with_cache
     from app.services.graph_memory import ingest_episode
     from app.services.storage import provider_audio_url
+    from app.services.voiceprint import match_meeting_speakers
 
 
 def _stage_start(db: Any, meeting: Any, stage_name: str) -> tuple[Any, Any]:
@@ -222,6 +223,27 @@ async def extract_activity(meeting_id: str) -> dict[str, Any]:
 
 
 @activity.defn
+async def voiceprint_match_activity(meeting_id: str) -> dict[str, Any]:
+    meeting_uuid = UUID(meeting_id)
+    with SessionLocal() as db:
+        meeting = get_meeting(db, meeting_uuid)
+        if not meeting:
+            raise ValueError(f"meeting not found: {meeting_id}")
+        _, stage = _stage_start(db, meeting, "voiceprint_matching")
+        try:
+            if not meeting.normalized_audio_uri:
+                output = {"status": "SKIPPED", "reason": "no_normalized_audio"}
+            else:
+                result = match_meeting_speakers(db, meeting)
+                output = {"status": "COMPLETED", **result}
+            _stage_finish(db, stage, output)
+            return output
+        except Exception as exc:
+            _stage_fail(db, meeting, stage, exc)
+            raise
+
+
+@activity.defn
 async def graph_activity(meeting_id: str) -> dict[str, Any]:
     meeting_uuid = UUID(meeting_id)
     with SessionLocal() as db:
@@ -297,6 +319,12 @@ class MeetingIngestWorkflow:
             start_to_close_timeout=timedelta(hours=1),
             retry_policy=network_retry,
         )
+        voiceprints = await workflow.execute_activity(
+            voiceprint_match_activity,
+            meeting_id,
+            start_to_close_timeout=timedelta(hours=1),
+            retry_policy=short_retry,
+        )
         graph = await workflow.execute_activity(
             graph_activity,
             meeting_id,
@@ -310,5 +338,6 @@ class MeetingIngestWorkflow:
             "transcription": transcription,
             "canonical": canonical,
             "extraction": extraction,
+            "voiceprints": voiceprints,
             "graph": graph,
         }

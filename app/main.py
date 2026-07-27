@@ -52,6 +52,7 @@ from app.repository import (
 from app.schemas import (
     AgentQuery,
     AnalysisRequest,
+    CandidateReview,
     ConversationAsk,
     ConversationCreate,
     ImportedMeetingCreate,
@@ -62,6 +63,7 @@ from app.schemas import (
     TingwuCallback,
     UploadComplete,
     UploadInitiate,
+    VoiceprintEnroll,
 )
 from app.services.agent import run_agent, scope_meeting_ids
 from app.services.embeddings import embedding_service
@@ -76,6 +78,15 @@ from app.services.storage import (
     put_bytes,
     stream_object,
     verify_provider_audio_token,
+)
+from app.services.voiceprint import (
+    delete_person,
+    delete_voiceprint_profile,
+    enroll_voiceprint,
+    list_candidates,
+    list_people,
+    match_tenant_speakers,
+    review_candidate,
 )
 from app.workflows.ingest import MeetingIngestWorkflow
 
@@ -606,6 +617,88 @@ def all_extraction_usage(
     db: Annotated[Session, Depends(get_db)],
 ) -> dict[str, Any]:
     return extraction_stats(db)
+
+
+@app.get("/v1/people")
+def voiceprint_people(
+    db: Annotated[Session, Depends(get_db)],
+) -> dict[str, Any]:
+    values = list_people(db, tenant_id=settings.default_tenant_id)
+    return {"count": len(values), "people": values}
+
+
+@app.post("/v1/voiceprints/enroll", status_code=status.HTTP_201_CREATED)
+def enroll_speaker_voiceprint(
+    payload: VoiceprintEnroll,
+    db: Annotated[Session, Depends(get_db)],
+) -> dict[str, Any]:
+    try:
+        return enroll_voiceprint(
+            db,
+            meeting_id=payload.meeting_id,
+            speaker_id=payload.speaker_id,
+            person_id=payload.person_id,
+            display_name=payload.display_name,
+            tenant_id=settings.default_tenant_id,
+            user_id=settings.default_user_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post("/v1/voiceprints/scan")
+def scan_cross_meeting_voiceprints(
+    db: Annotated[Session, Depends(get_db)],
+) -> dict[str, Any]:
+    return match_tenant_speakers(db, tenant_id=settings.default_tenant_id)
+
+
+@app.get("/v1/voiceprints/candidates")
+def voiceprint_candidates(
+    db: Annotated[Session, Depends(get_db)],
+) -> dict[str, Any]:
+    values = list_candidates(db, tenant_id=settings.default_tenant_id)
+    return {"count": len(values), "candidates": values}
+
+
+@app.post("/v1/voiceprints/candidates/{candidate_id}/review")
+def confirm_voiceprint_candidate(
+    candidate_id: UUID,
+    payload: CandidateReview,
+    db: Annotated[Session, Depends(get_db)],
+) -> dict[str, Any]:
+    try:
+        return review_candidate(
+            db,
+            candidate_id=candidate_id,
+            accept=payload.accept,
+            tenant_id=settings.default_tenant_id,
+            user_id=settings.default_user_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.delete("/v1/voiceprints/{profile_id}", status_code=status.HTTP_204_NO_CONTENT)
+def remove_voiceprint_profile(
+    profile_id: UUID,
+    db: Annotated[Session, Depends(get_db)],
+) -> Response:
+    if not delete_voiceprint_profile(
+        db, profile_id=profile_id, tenant_id=settings.default_tenant_id
+    ):
+        raise HTTPException(status_code=404, detail="voiceprint profile not found")
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@app.delete("/v1/people/{person_id}", status_code=status.HTTP_204_NO_CONTENT)
+def remove_person_and_voiceprints(
+    person_id: UUID,
+    db: Annotated[Session, Depends(get_db)],
+) -> Response:
+    if not delete_person(db, person_id=person_id, tenant_id=settings.default_tenant_id):
+        raise HTTPException(status_code=404, detail="person not found")
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @app.get("/v1/meetings/{meeting_id}/extractions")

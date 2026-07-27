@@ -112,3 +112,14 @@ class UploadInitiate(BaseModel):
 
 class UploadComplete(BaseModel):
     sha256: str | None = Field(default=None, pattern=r"^[a-fA-F0-9]{64}$")
+
+
+class VoiceprintEnroll(BaseModel):
+    meeting_id: UUID
+    speaker_id: UUID
+    person_id: UUID | None = None
+    display_name: str | None = Field(default=None, min_length=1, max_length=200)
+
+
+class CandidateReview(BaseModel):
+    accept: bool

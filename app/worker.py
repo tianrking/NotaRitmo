@@ -11,6 +11,7 @@ from app.workflows.ingest import (
     normalize_activity,
     prepare_audio_activity,
     transcribe_activity,
+    voiceprint_match_activity,
 )
 
 
@@ -34,6 +35,7 @@ async def main() -> None:
             transcribe_activity,
             normalize_activity,
             extract_activity,
+            voiceprint_match_activity,
             graph_activity,
         ],
     )
