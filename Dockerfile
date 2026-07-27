@@ -9,7 +9,7 @@ WORKDIR /app
 COPY pyproject.toml README.md /app/
 RUN mkdir -p /app/app && touch /app/app/__init__.py
 RUN pip install --upgrade pip && pip install ".[dev]"
-RUN rm -rf /app/app
+RUN pip uninstall -y notaritmo && rm -rf /app/app
 
 COPY app /app/app
 COPY alembic.ini /app/alembic.ini
