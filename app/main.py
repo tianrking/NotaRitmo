@@ -22,6 +22,7 @@ from app.repository import (
     overview,
     search_segments,
     transcript,
+    words,
 )
 from app.schemas import (
     AgentQuery,
@@ -230,6 +231,17 @@ def meeting_artifacts(
     return {"meeting_id": str(meeting_id), "artifacts": artifacts(db, meeting_id)}
 
 
+@app.get("/v1/meetings/{meeting_id}/words")
+def meeting_words(
+    meeting_id: UUID,
+    db: Annotated[Session, Depends(get_db)],
+) -> dict[str, Any]:
+    meeting = get_meeting(db, meeting_id)
+    if not meeting:
+        raise HTTPException(status_code=404, detail="meeting not found")
+    return {"meeting_id": str(meeting_id), "words": words(db, meeting_id)}
+
+
 @app.get("/v1/meetings/{meeting_id}/summary")
 def meeting_summary(
     meeting_id: UUID,
@@ -301,4 +313,3 @@ async def tingwu_callback(
         raise HTTPException(status_code=404, detail="unknown Tingwu TaskId")
     workflow_id = await start_ingest(meeting.id)
     return {"status": "accepted", "meeting_id": str(meeting.id), "workflow_id": workflow_id}
-

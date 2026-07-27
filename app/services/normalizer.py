@@ -78,12 +78,16 @@ def keyword_items(text: str, limit: int = 30) -> list[dict[str, Any]]:
     ]
 
 
-def _segments(transcription: dict[str, Any]) -> tuple[list[dict], list[dict], int | None]:
+def _segments(
+    transcription: dict[str, Any],
+) -> tuple[list[dict], list[dict], list[dict], int | None]:
     paragraphs = transcription.get("Paragraphs") or []
     audio_info = transcription.get("AudioInfo") or {}
     speakers: dict[str, dict] = {}
     segments: list[dict] = []
+    canonical_words: list[dict] = []
     ordinal = 0
+    word_ordinal = 0
 
     for paragraph in paragraphs:
         provider_speaker_id = str(paragraph.get("SpeakerId", "unknown"))
@@ -118,9 +122,29 @@ def _segments(transcription: dict[str, Any]) -> tuple[list[dict], list[dict], in
                     "overlap": False,
                 }
             )
+            for word in sentence_words:
+                word_text = str(word.get("Text", "")).strip()
+                if not word_text:
+                    continue
+                confidence = word.get("Confidence")
+                canonical_words.append(
+                    {
+                        "segment_ordinal": ordinal,
+                        "provider_speaker_id": provider_speaker_id,
+                        "provider_word_id": (
+                            str(word["Id"]) if word.get("Id") is not None else None
+                        ),
+                        "ordinal": word_ordinal,
+                        "start_ms": int(word.get("Start", 0)),
+                        "end_ms": int(word.get("End", word.get("Start", 0))),
+                        "text": word_text,
+                        "confidence": float(confidence) if confidence is not None else None,
+                    }
+                )
+                word_ordinal += 1
             ordinal += 1
 
-    return list(speakers.values()), segments, audio_info.get("Duration")
+    return list(speakers.values()), segments, canonical_words, audio_info.get("Duration")
 
 
 def _provider_artifacts(bundle: dict[str, Any]) -> dict[str, Any]:
@@ -160,7 +184,7 @@ def _provider_artifacts(bundle: dict[str, Any]) -> dict[str, Any]:
 
 def normalize_tingwu(bundle: dict[str, Any]) -> dict[str, Any]:
     transcription = _unwrap(bundle, "Transcription")
-    speakers, segments, duration_ms = _segments(transcription)
+    speakers, segments, words, duration_ms = _segments(transcription)
     transcript_text = "\n".join(segment["text"] for segment in segments)
     provider = _provider_artifacts(bundle)
 
@@ -264,6 +288,7 @@ def normalize_tingwu(bundle: dict[str, Any]) -> dict[str, Any]:
         "duration_ms": duration_ms,
         "speakers": speakers,
         "segments": segments,
+        "words": words,
         "artifacts": artifacts,
         "memories": memories,
     }

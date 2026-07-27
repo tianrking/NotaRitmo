@@ -137,6 +137,34 @@ class Segment(Base):
     embedding: Mapped[list[float] | None] = mapped_column(Vector(384))
 
 
+class Word(Base):
+    __tablename__ = "words"
+    __table_args__ = (
+        Index("ix_words_meeting_start", "meeting_id", "start_ms"),
+        UniqueConstraint("segment_id", "ordinal", name="uq_word_segment_ordinal"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), index=True)
+    meeting_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("meetings.id", ondelete="CASCADE"), index=True
+    )
+    segment_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("segments.id", ondelete="CASCADE"), index=True
+    )
+    speaker_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("speakers.id", ondelete="SET NULL"), index=True
+    )
+    provider_word_id: Mapped[str | None] = mapped_column(String(100))
+    ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
+    start_ms: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    end_ms: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    confidence: Mapped[float | None]
+
+
 class Artifact(Base):
     __tablename__ = "artifacts"
     __table_args__ = (
@@ -199,4 +227,3 @@ class QueryAudit(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
-

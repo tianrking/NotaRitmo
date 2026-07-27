@@ -17,6 +17,7 @@ from app.models import (
     QueryAudit,
     Segment,
     Speaker,
+    Word,
 )
 from app.services.normalizer import tokenize
 
@@ -117,6 +118,26 @@ def replace_normalized(db: Session, meeting: Meeting, normalized: dict[str, Any]
         db.flush()
         segment_by_ordinal[item["ordinal"]] = segment
 
+    for item in normalized.get("words", []):
+        segment = segment_by_ordinal.get(item["segment_ordinal"])
+        if not segment:
+            continue
+        speaker = speakers.get(item["provider_speaker_id"])
+        db.add(
+            Word(
+                tenant_id=meeting.tenant_id,
+                meeting_id=meeting.id,
+                segment_id=segment.id,
+                speaker_id=speaker.id if speaker else None,
+                provider_word_id=item["provider_word_id"],
+                ordinal=item["ordinal"],
+                start_ms=item["start_ms"],
+                end_ms=item["end_ms"],
+                text=item["text"],
+                confidence=item["confidence"],
+            )
+        )
+
     for item in normalized["artifacts"]:
         db.add(
             Artifact(
@@ -165,7 +186,7 @@ def transcript(db: Session, meeting_id: uuid.UUID) -> list[dict[str, Any]]:
         )
         .order_by(Segment.ordinal)
     )
-    return [
+    values = [
         {
             "segment_id": str(segment.id),
             "meeting_id": str(segment.meeting_id),
@@ -178,6 +199,59 @@ def transcript(db: Session, meeting_id: uuid.UUID) -> list[dict[str, Any]]:
             "overlap": segment.overlap,
         }
         for segment, speaker in db.execute(statement).all()
+    ]
+    words_by_segment: dict[str, list[dict[str, Any]]] = {}
+    word_rows = db.execute(
+        select(Word, Speaker)
+        .outerjoin(Speaker, Word.speaker_id == Speaker.id)
+        .where(
+            Word.tenant_id == settings.default_tenant_id,
+            Word.meeting_id == meeting_id,
+        )
+        .order_by(Word.ordinal)
+    ).all()
+    for word, speaker in word_rows:
+        words_by_segment.setdefault(str(word.segment_id), []).append(
+            {
+                "word_id": str(word.id),
+                "provider_word_id": word.provider_word_id,
+                "speaker_name": speaker.display_name if speaker else "Unknown",
+                "start_ms": word.start_ms,
+                "end_ms": word.end_ms,
+                "text": word.text,
+                "confidence": word.confidence,
+                "ordinal": word.ordinal,
+            }
+        )
+    for item in values:
+        item["words"] = words_by_segment.get(item["segment_id"], [])
+    return values
+
+
+def words(db: Session, meeting_id: uuid.UUID) -> list[dict[str, Any]]:
+    statement = (
+        select(Word, Speaker)
+        .outerjoin(Speaker, Word.speaker_id == Speaker.id)
+        .where(
+            Word.tenant_id == settings.default_tenant_id,
+            Word.meeting_id == meeting_id,
+        )
+        .order_by(Word.ordinal)
+    )
+    return [
+        {
+            "word_id": str(word.id),
+            "segment_id": str(word.segment_id),
+            "speaker_id": str(speaker.id) if speaker else None,
+            "speaker_name": speaker.display_name if speaker else "Unknown",
+            "provider_word_id": word.provider_word_id,
+            "start_ms": word.start_ms,
+            "end_ms": word.end_ms,
+            "text": word.text,
+            "confidence": word.confidence,
+            "ordinal": word.ordinal,
+        }
+        for word, speaker in db.execute(statement).all()
     ]
 
 
@@ -315,6 +389,7 @@ def counts(db: Session) -> dict[str, int]:
     return {
         "meetings": db.scalar(select(func.count(Meeting.id))) or 0,
         "segments": db.scalar(select(func.count(Segment.id))) or 0,
+        "words": db.scalar(select(func.count(Word.id))) or 0,
         "artifacts": db.scalar(select(func.count(Artifact.id))) or 0,
         "memories": db.scalar(select(func.count(MemoryRecord.id))) or 0,
     }
