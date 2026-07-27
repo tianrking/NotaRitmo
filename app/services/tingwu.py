@@ -68,20 +68,11 @@ class TingwuClient:
                     "DiarizationEnabled": True,
                     "Diarization": {"SpeakerCount": 0},
                 },
-                "AutoChaptersEnabled": True,
-                "MeetingAssistanceEnabled": True,
-                "MeetingAssistance": {"Types": ["Actions", "KeyInformation"]},
-                "SummarizationEnabled": True,
-                "Summarization": {
-                    "Types": [
-                        "Paragraph",
-                        "Conversational",
-                        "QuestionsAnswering",
-                        "MindMap",
-                    ]
-                },
-                "TextPolishEnabled": True,
-                "Model": settings.tingwu_llm_model,
+                "AutoChaptersEnabled": False,
+                "MeetingAssistanceEnabled": False,
+                "SummarizationEnabled": False,
+                "TextPolishEnabled": False,
+                "TranslationEnabled": False,
             },
         }
         request = CommonRequest()
@@ -126,4 +117,3 @@ class TingwuClient:
             if status in {"FAILED", "INVALID"}:
                 raise TingwuError(f"听悟任务失败：{data}")
             await asyncio.sleep(settings.tingwu_poll_seconds)
-

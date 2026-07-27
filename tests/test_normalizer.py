@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 
+from app.services.intelligence import build_intelligence
 from app.services.normalizer import normalize_tingwu
 
 
@@ -19,12 +20,14 @@ def test_normalize_official_tingwu_shape() -> None:
     assert normalized["segments"][1]["start_ms"] == 3000
     assert normalized["segments"][1]["text"] == "我们决定Android首版采用分包传输。"
 
-    artifacts = {item["kind"]: item for item in normalized["artifacts"]}
-    assert artifacts["summary"]["data"]["text"].startswith("会议确定K6")
+    assert set(normalized) == {"duration_ms", "speakers", "segments", "words"}
+    intelligence = build_intelligence(normalized)
+    artifacts = {item["kind"]: item for item in intelligence["artifacts"]}
+    assert artifacts["summary"]["source"] == "rules"
     assert artifacts["wordcloud"]["data"]["items"]
-    assert artifacts["mindmap"]["data"]["name"] == "K6 OTA"
-    assert any(item["kind"] == "decision" for item in normalized["memories"])
-    assert any(item["kind"] == "action_item" for item in normalized["memories"])
+    assert artifacts["mindmap"]["data"]["name"] == "会议"
+    assert any(item["kind"] == "decision" for item in intelligence["memories"])
+    assert any(item["kind"] == "action_item" for item in intelligence["memories"])
 
 
 def test_fallback_artifacts_are_still_generated() -> None:
@@ -50,8 +53,8 @@ def test_fallback_artifacts_are_still_generated() -> None:
         }
     }
     normalized = normalize_tingwu(bundle)
-    artifacts = {item["kind"]: item for item in normalized["artifacts"]}
-    assert artifacts["summary"]["source"] == "fallback"
+    intelligence = build_intelligence(normalized)
+    artifacts = {item["kind"]: item for item in intelligence["artifacts"]}
+    assert artifacts["summary"]["source"] == "rules"
     assert artifacts["keywords"]["data"]["items"]
     assert artifacts["chapters"]["data"]["items"]
-

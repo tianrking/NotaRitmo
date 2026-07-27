@@ -16,10 +16,10 @@ with workflow.unsafe.imports_passed_through():
         replace_normalized,
     )
     from app.services.embeddings import embedding_service
+    from app.services.asr import asr_registry
     from app.services.graph_memory import ingest_episode
-    from app.services.normalizer import normalize_tingwu
+    from app.services.intelligence import build_intelligence
     from app.services.storage import provider_audio_url
-    from app.services.tingwu import TingwuClient
 
 
 @activity.defn
@@ -36,15 +36,14 @@ async def process_meeting_activity(meeting_id: str) -> dict:
 
             raw = meeting.raw_result
             if not raw:
-                client = TingwuClient()
+                provider = asr_registry.get(meeting.source_provider)
                 if meeting.source_task_id:
                     task_id = meeting.source_task_id
                 else:
                     audio_url = meeting.audio_uri
                     if audio_url and audio_url.startswith("minio://"):
                         audio_url = provider_audio_url(meeting.id)
-                    task_id = await asyncio.to_thread(
-                        client.create_offline_task,
+                    task_id = await provider.submit(
                         audio_url=audio_url,
                         task_key=str(meeting.id),
                         source_language=meeting.source_language,
@@ -52,12 +51,13 @@ async def process_meeting_activity(meeting_id: str) -> dict:
                     meeting.source_task_id = task_id
                     meeting.status = "SUBMITTED"
                     db.commit()
-                raw = await client.wait_and_download(task_id)
+                raw = await provider.wait(task_id)
                 meeting.raw_result = raw
                 meeting.status = "NORMALIZING"
                 db.commit()
 
-            normalized = normalize_tingwu(raw)
+            normalized = asr_registry.get(meeting.source_provider).normalize(raw)
+            normalized.update(build_intelligence(normalized))
             embedder = embedding_service()
             segment_vectors = await asyncio.to_thread(
                 embedder.documents,
