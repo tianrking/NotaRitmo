@@ -45,7 +45,7 @@ class Settings(BaseSettings):
     embedding_model: str = ""
     embedding_dimensions: int = Field(default=384, ge=1, le=4096)
     local_embeddings_enabled: bool = True
-    local_embedding_model: str = "intfloat/multilingual-e5-small"
+    local_embedding_model: str = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
     local_embedding_cache: str = "/models/fastembed"
 
     graph_memory_enabled: bool = True
