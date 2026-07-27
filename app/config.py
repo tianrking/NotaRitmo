@@ -17,6 +17,16 @@ class Settings(BaseSettings):
     minio_secret_key: str = "meeting-minio-secret"
     minio_bucket: str = "meeting-audio"
     minio_secure: bool = False
+    minio_public_endpoint: str = "localhost:9000"
+    minio_public_secure: bool = False
+    minio_region: str = "us-east-1"
+    upload_url_ttl_seconds: int = 3600
+    audio_max_bytes: int = 6 * 1024 * 1024 * 1024
+    audio_max_duration_seconds: int = 6 * 60 * 60
+    audio_preprocess_version: str = "ffmpeg-v1"
+    audio_denoise_default: bool = False
+    ffmpeg_binary: str = "ffmpeg"
+    ffprobe_binary: str = "ffprobe"
 
     temporal_address: str = "temporal:7233"
     temporal_namespace: str = "default"

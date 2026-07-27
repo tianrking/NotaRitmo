@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 from collections import Counter
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import delete, func, or_, select
@@ -23,6 +23,7 @@ from app.models import (
     Segment,
     Speaker,
     Word,
+    UploadSession,
 )
 from app.services.normalizer import tokenize
 
@@ -35,29 +36,90 @@ def create_meeting(
     project_id: str | None,
     source_language: str,
     raw_result: dict | None = None,
+    tenant_id: uuid.UUID | None = None,
+    user_id: uuid.UUID | None = None,
+    denoise_enabled: bool | None = None,
 ) -> Meeting:
+    tenant_id = tenant_id or settings.default_tenant_id
+    user_id = user_id or settings.default_user_id
     meeting = Meeting(
-        tenant_id=settings.default_tenant_id,
-        created_by=settings.default_user_id,
+        tenant_id=tenant_id,
+        created_by=user_id,
         title=title,
         project_id=project_id,
         source_language=source_language,
         audio_uri=audio_uri,
         raw_result=raw_result,
         status="IMPORTED" if raw_result else "CREATED",
+        denoise_enabled=(
+            settings.audio_denoise_default
+            if denoise_enabled is None
+            else denoise_enabled
+        ),
     )
     db.add(meeting)
     db.flush()
     db.add(
         MeetingAccess(
             meeting_id=meeting.id,
-            user_id=settings.default_user_id,
+            user_id=user_id,
             role="owner",
         )
     )
     db.commit()
     db.refresh(meeting)
     return meeting
+
+
+def create_upload_session(
+    db: Session,
+    *,
+    filename: str,
+    content_type: str,
+    expected_size: int,
+    expected_sha256: str | None,
+    title: str,
+    project_id: str | None,
+    source_language: str,
+    denoise_enabled: bool,
+    tenant_id: uuid.UUID | None = None,
+    user_id: uuid.UUID | None = None,
+) -> UploadSession:
+    tenant_id = tenant_id or settings.default_tenant_id
+    user_id = user_id or settings.default_user_id
+    upload_id = uuid.uuid4()
+    safe_name = filename.replace("/", "_").replace("\\", "_")[:500] or "audio.bin"
+    value = UploadSession(
+        id=upload_id,
+        tenant_id=tenant_id,
+        user_id=user_id,
+        object_name=f"{tenant_id}/uploads/{upload_id}/{safe_name}",
+        filename=safe_name,
+        content_type=content_type,
+        expected_size=expected_size,
+        expected_sha256=expected_sha256,
+        title=title,
+        project_id=project_id,
+        source_language=source_language,
+        denoise_enabled=denoise_enabled,
+        status="PENDING",
+        expires_at=datetime.now(UTC)
+        + timedelta(seconds=settings.upload_url_ttl_seconds),
+    )
+    db.add(value)
+    db.commit()
+    db.refresh(value)
+    return value
+
+
+def get_upload_session(db: Session, upload_id: uuid.UUID) -> UploadSession | None:
+    return db.scalar(
+        select(UploadSession).where(
+            UploadSession.id == upload_id,
+            UploadSession.tenant_id == settings.default_tenant_id,
+            UploadSession.user_id == settings.default_user_id,
+        )
+    )
 
 
 def get_meeting(db: Session, meeting_id: uuid.UUID) -> Meeting | None:

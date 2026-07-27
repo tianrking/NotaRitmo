@@ -135,7 +135,7 @@ async def transcribe_activity(meeting_id: str) -> dict[str, Any]:
             else:
                 audio_url = getattr(meeting, "normalized_audio_uri", None) or meeting.audio_uri
                 if audio_url and audio_url.startswith("minio://"):
-                    audio_url = provider_audio_url(meeting.id, audio_url)
+                    audio_url = provider_audio_url(meeting.id)
                 task_id = await provider.submit(
                     audio_url=audio_url,
                     task_key=str(meeting.id),

@@ -31,6 +31,11 @@ class MeetingResponse(BaseModel):
     source_task_id: str | None
     source_language: str
     audio_uri: str | None
+    normalized_audio_uri: str | None
+    audio_input_hash: str | None
+    audio_preflight: dict | None
+    audio_preprocess_version: str | None
+    denoise_enabled: bool
     duration_ms: int | None
     canonical_hash: str | None
     error: dict | None
@@ -92,3 +97,18 @@ class TingwuCallback(BaseModel):
     Data: dict[str, Any]
     Message: str | None = None
     RequestId: str | None = None
+
+
+class UploadInitiate(BaseModel):
+    filename: str = Field(min_length=1, max_length=500)
+    content_type: str = Field(min_length=1, max_length=200)
+    size_bytes: int = Field(gt=0)
+    sha256: str | None = Field(default=None, pattern=r"^[a-fA-F0-9]{64}$")
+    title: str = Field(min_length=1, max_length=500)
+    project_id: str | None = Field(default=None, max_length=200)
+    source_language: str = Field(default="cn", max_length=40)
+    denoise_enabled: bool = False
+
+
+class UploadComplete(BaseModel):
+    sha256: str | None = Field(default=None, pattern=r"^[a-fA-F0-9]{64}$")

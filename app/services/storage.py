@@ -4,6 +4,7 @@ import time
 from collections.abc import Iterator
 from datetime import timedelta
 from io import BytesIO
+from pathlib import Path
 from urllib.parse import urlencode
 from uuid import UUID
 
@@ -18,6 +19,17 @@ def get_minio() -> Minio:
         access_key=settings.minio_access_key,
         secret_key=settings.minio_secret_key,
         secure=settings.minio_secure,
+        region=settings.minio_region,
+    )
+
+
+def get_public_minio() -> Minio:
+    return Minio(
+        settings.minio_public_endpoint,
+        access_key=settings.minio_access_key,
+        secret_key=settings.minio_secret_key,
+        secure=settings.minio_public_secure,
+        region=settings.minio_region,
     )
 
 
@@ -38,6 +50,44 @@ def put_bytes(object_name: str, content: bytes, content_type: str) -> str:
         content_type=content_type,
     )
     return f"minio://{settings.minio_bucket}/{object_name}"
+
+
+def put_file(object_name: str, path: Path, content_type: str) -> str:
+    ensure_bucket()
+    get_minio().fput_object(
+        settings.minio_bucket,
+        object_name,
+        str(path),
+        content_type=content_type,
+    )
+    return f"minio://{settings.minio_bucket}/{object_name}"
+
+
+def download_file(object_name: str, path: Path) -> None:
+    ensure_bucket()
+    get_minio().fget_object(settings.minio_bucket, object_name, str(path))
+
+
+def object_stat(object_name: str) -> dict[str, object]:
+    stat = get_minio().stat_object(settings.minio_bucket, object_name)
+    return {
+        "size": stat.size,
+        "content_type": stat.content_type,
+        "etag": stat.etag,
+        "last_modified": stat.last_modified,
+        "metadata": dict(stat.metadata or {}),
+    }
+
+
+def presigned_put(object_name: str, expires_seconds: int | None = None) -> str:
+    ensure_bucket()
+    return get_public_minio().presigned_put_object(
+        settings.minio_bucket,
+        object_name,
+        expires=timedelta(
+            seconds=expires_seconds or settings.upload_url_ttl_seconds
+        ),
+    )
 
 
 def presigned_get(object_name: str, hours: int = 4) -> str:

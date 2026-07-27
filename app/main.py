@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import uuid
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from typing import Annotated, Any
 from uuid import UUID
 
@@ -30,9 +31,11 @@ from app.repository import (
     counts,
     create_conversation,
     create_meeting,
+    create_upload_session,
     get_conversation,
     get_meeting,
     get_meeting_by_task_id,
+    get_upload_session,
     list_conversations,
     list_meetings,
     meeting_memories,
@@ -57,6 +60,8 @@ from app.schemas import (
     MemorySearchRequest,
     SearchRequest,
     TingwuCallback,
+    UploadComplete,
+    UploadInitiate,
 )
 from app.services.agent import run_agent, scope_meeting_ids
 from app.services.embeddings import embedding_service
@@ -65,7 +70,9 @@ from app.services.graph_memory import graph_for_meeting, graph_health, graph_sea
 from app.services.storage import (
     ensure_bucket,
     parse_minio_uri,
+    object_stat,
     presigned_get,
+    presigned_put,
     put_bytes,
     stream_object,
     verify_provider_audio_token,
@@ -100,6 +107,91 @@ async def start_ingest(meeting_id: UUID) -> str:
         task_queue=settings.temporal_task_queue,
     )
     return workflow_id
+
+
+@app.post("/v1/uploads", status_code=status.HTTP_201_CREATED)
+def initiate_direct_upload(
+    payload: UploadInitiate,
+    db: Annotated[Session, Depends(get_db)],
+) -> dict[str, Any]:
+    if payload.size_bytes > settings.audio_max_bytes:
+        raise HTTPException(
+            status_code=413,
+            detail=f"file exceeds AUDIO_MAX_BYTES={settings.audio_max_bytes}",
+        )
+    upload = create_upload_session(
+        db,
+        filename=payload.filename,
+        content_type=payload.content_type,
+        expected_size=payload.size_bytes,
+        expected_sha256=payload.sha256.lower() if payload.sha256 else None,
+        title=payload.title,
+        project_id=payload.project_id,
+        source_language=payload.source_language,
+        denoise_enabled=payload.denoise_enabled,
+    )
+    return {
+        "upload_id": str(upload.id),
+        "method": "PUT",
+        "url": presigned_put(upload.object_name),
+        "headers": {"Content-Type": payload.content_type},
+        "expires_at": upload.expires_at.isoformat(),
+        "max_bytes": settings.audio_max_bytes,
+    }
+
+
+@app.post(
+    "/v1/uploads/{upload_id}/complete",
+    response_model=MeetingResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def complete_direct_upload(
+    upload_id: UUID,
+    payload: UploadComplete,
+    response: Response,
+    db: Annotated[Session, Depends(get_db)],
+) -> MeetingResponse:
+    upload = get_upload_session(db, upload_id)
+    if not upload:
+        raise HTTPException(status_code=404, detail="upload session not found")
+    if upload.status == "COMPLETED" and upload.meeting_id:
+        meeting = get_meeting(db, upload.meeting_id)
+        if meeting:
+            return MeetingResponse.model_validate(meeting)
+    if upload.expires_at < datetime.now(UTC):
+        upload.status = "EXPIRED"
+        db.commit()
+        raise HTTPException(status_code=410, detail="upload session expired")
+    if payload.sha256 and upload.expected_sha256:
+        if payload.sha256.lower() != upload.expected_sha256.lower():
+            raise HTTPException(status_code=422, detail="declared SHA-256 mismatch")
+    try:
+        stat_value = object_stat(upload.object_name)
+    except Exception as exc:
+        raise HTTPException(status_code=409, detail="object upload is not complete") from exc
+    if stat_value["size"] != upload.expected_size:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "message": "uploaded object size mismatch",
+                "expected": upload.expected_size,
+                "actual": stat_value["size"],
+            },
+        )
+    meeting = create_meeting(
+        db,
+        title=upload.title,
+        audio_uri=f"minio://{settings.minio_bucket}/{upload.object_name}",
+        project_id=upload.project_id,
+        source_language=upload.source_language,
+        denoise_enabled=upload.denoise_enabled,
+    )
+    upload.meeting_id = meeting.id
+    upload.status = "COMPLETED"
+    upload.completed_at = datetime.now(UTC)
+    db.commit()
+    response.headers["X-Workflow-Id"] = await start_ingest(meeting.id)
+    return MeetingResponse.model_validate(meeting)
 
 
 @app.get("/health")
@@ -561,9 +653,12 @@ def provider_audio_download(
     if not verify_provider_audio_token(meeting_id, expires, token):
         raise HTTPException(status_code=403, detail="invalid or expired download token")
     meeting = get_meeting(db, meeting_id)
-    if not meeting or not meeting.audio_uri or not meeting.audio_uri.startswith("minio://"):
+    selected_uri = (
+        meeting.normalized_audio_uri if meeting else None
+    ) or (meeting.audio_uri if meeting else None)
+    if not meeting or not selected_uri or not selected_uri.startswith("minio://"):
         raise HTTPException(status_code=404, detail="audio not found")
-    iterator, content_type, size = stream_object(parse_minio_uri(meeting.audio_uri))
+    iterator, content_type, size = stream_object(parse_minio_uri(selected_uri))
     headers = {"Content-Length": str(size)} if size is not None else {}
     return StreamingResponse(
         iterator,
