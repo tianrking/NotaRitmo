@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 from temporalio import activity, workflow
@@ -9,7 +9,12 @@ from temporalio.common import RetryPolicy
 
 with workflow.unsafe.imports_passed_through():
     from app.db import SessionLocal
-    from app.repository import get_meeting, replace_normalized
+    from app.repository import (
+        get_meeting,
+        meeting_report,
+        memory_timeline,
+        replace_normalized,
+    )
     from app.services.graph_memory import ingest_episode
     from app.services.embeddings import embedding_service
     from app.services.normalizer import normalize_tingwu
@@ -64,29 +69,50 @@ async def process_meeting_activity(meeting_id: str) -> dict:
                 item["embedding"] = vector or None
             replace_normalized(db, meeting, normalized)
             project_id = meeting.project_id
-            graph_payload = {
-                "meeting_id": meeting_id,
-                "title": meeting.title,
-                "project_id": project_id,
-                "memories": normalized["memories"],
-            }
+            graph_payload = meeting_report(db, meeting_uuid)
+            if graph_payload is None:
+                raise RuntimeError("canonical report unavailable after normalization")
+            graph_payload["memory_links"] = memory_timeline(
+                db, project_id=project_id
+            )["links"]
 
-        graph_indexed = False
+        graph_result: dict = {"indexed": False}
         try:
-            graph_indexed = await ingest_episode(meeting_id, project_id, graph_payload)
+            graph_result = await ingest_episode(meeting_id, project_id, graph_payload)
+            with SessionLocal() as db:
+                meeting = get_meeting(db, meeting_uuid)
+                if meeting:
+                    meeting.graph_status = (
+                        "READY" if graph_result.get("indexed") else "DISABLED"
+                    )
+                    meeting.graph_indexed_at = (
+                        datetime.now(UTC) if graph_result.get("indexed") else None
+                    )
+                    db.commit()
         except Exception as graph_exc:
+            with SessionLocal() as db:
+                meeting = get_meeting(db, meeting_uuid)
+                if meeting:
+                    meeting.graph_status = "FAILED"
+                    meeting.error = {
+                        "stage": "graph_projection",
+                        "type": type(graph_exc).__name__,
+                        "message": str(graph_exc)[:2000],
+                    }
+                    db.commit()
             activity.logger.warning(
                 "Graph index failed for meeting %s: %s",
                 meeting_id,
                 graph_exc,
             )
+            raise
         return {
             "meeting_id": meeting_id,
             "status": "READY",
             "segments": len(normalized["segments"]),
             "artifacts": len(normalized["artifacts"]),
             "memories": len(normalized["memories"]),
-            "graph_indexed": graph_indexed,
+            "graph": graph_result,
         }
     except Exception as exc:
         with SessionLocal() as db:

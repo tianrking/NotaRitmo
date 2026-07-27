@@ -46,6 +46,7 @@ class Settings(BaseSettings):
     local_embedding_model: str = "intfloat/multilingual-e5-small"
     local_embedding_cache: str = "/models/fastembed"
 
+    graph_memory_enabled: bool = True
     graphiti_enabled: bool = False
     neo4j_uri: str = "bolt://neo4j:7687"
     neo4j_user: str = "neo4j"

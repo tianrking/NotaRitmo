@@ -33,6 +33,8 @@ class MeetingResponse(BaseModel):
     audio_uri: str | None
     duration_ms: int | None
     error: dict | None
+    graph_status: str
+    graph_indexed_at: datetime | None
     created_at: datetime
     updated_at: datetime
 

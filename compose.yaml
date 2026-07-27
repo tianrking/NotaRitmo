@@ -100,6 +100,8 @@ services:
         condition: service_healthy
       temporal:
         condition: service_started
+      neo4j:
+        condition: service_healthy
 
   worker:
     <<: *app
@@ -111,15 +113,16 @@ services:
         condition: service_healthy
       temporal:
         condition: service_started
+      neo4j:
+        condition: service_healthy
 
   neo4j:
     image: neo4j:5.26-community
-    profiles: ["graph"]
     environment:
       NEO4J_AUTH: ${NEO4J_USER}/${NEO4J_PASSWORD}
-      NEO4J_server_memory_heap_initial__size: 1G
-      NEO4J_server_memory_heap_max__size: 2G
-      NEO4J_server_memory_pagecache_size: 1G
+      NEO4J_server_memory_heap_initial__size: 512M
+      NEO4J_server_memory_heap_max__size: 1G
+      NEO4J_server_memory_pagecache_size: 512M
     ports:
       - "127.0.0.1:${NEO4J_HTTP_PORT}:7474"
       - "127.0.0.1:${NEO4J_BOLT_PORT}:7687"

@@ -49,6 +49,7 @@ from app.schemas import (
 )
 from app.services.agent import run_agent, scope_meeting_ids
 from app.services.embeddings import embedding_service
+from app.services.graph_memory import graph_for_meeting, graph_health, graph_search
 from app.services.storage import ensure_bucket, presigned_get, put_bytes
 from app.workflows.ingest import MeetingIngestWorkflow
 
@@ -374,6 +375,39 @@ def cross_meeting_memory_timeline(
     meeting_ids: list[UUID] | None = None,
 ) -> dict[str, Any]:
     return memory_timeline(db, meeting_ids=meeting_ids, project_id=project_id)
+
+
+@app.get("/v1/graph/health")
+async def graph_memory_health() -> dict[str, Any]:
+    try:
+        return await graph_health()
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={"status": "unavailable", "message": str(exc)},
+        ) from exc
+
+
+@app.get("/v1/graph/search")
+async def search_memory_graph(
+    query: str,
+    project_id: str | None = None,
+    limit: int = 50,
+) -> dict[str, Any]:
+    if not query.strip():
+        raise HTTPException(status_code=422, detail="query must not be blank")
+    values = await graph_search(query, project_id=project_id, limit=min(max(limit, 1), 200))
+    return {"query": query, "count": len(values), "results": values}
+
+
+@app.get("/v1/meetings/{meeting_id}/graph")
+async def meeting_memory_graph(
+    meeting_id: UUID,
+    db: Annotated[Session, Depends(get_db)],
+) -> dict[str, Any]:
+    if not get_meeting(db, meeting_id):
+        raise HTTPException(status_code=404, detail="meeting not found")
+    return await graph_for_meeting(str(meeting_id))
 
 
 @app.post("/v1/conversations", status_code=status.HTTP_201_CREATED)
