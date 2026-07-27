@@ -11,6 +11,7 @@ with workflow.unsafe.imports_passed_through():
     from app.db import SessionLocal
     from app.repository import get_meeting, replace_normalized
     from app.services.graph_memory import ingest_episode
+    from app.services.embeddings import embedding_service
     from app.services.normalizer import normalize_tingwu
     from app.services.tingwu import TingwuClient
 
@@ -48,6 +49,19 @@ async def process_meeting_activity(meeting_id: str) -> dict:
                 db.commit()
 
             normalized = normalize_tingwu(raw)
+            embedder = embedding_service()
+            segment_vectors = await asyncio.to_thread(
+                embedder.documents,
+                [item["text"] for item in normalized["segments"]],
+            )
+            for item, vector in zip(normalized["segments"], segment_vectors, strict=True):
+                item["embedding"] = vector or None
+            memory_vectors = await asyncio.to_thread(
+                embedder.documents,
+                [item["content"] for item in normalized["memories"]],
+            )
+            for item, vector in zip(normalized["memories"], memory_vectors, strict=True):
+                item["embedding"] = vector or None
             replace_normalized(db, meeting, normalized)
             project_id = meeting.project_id
             graph_payload = {

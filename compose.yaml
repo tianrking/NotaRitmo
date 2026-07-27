@@ -11,6 +11,8 @@ x-app: &app
   restart: unless-stopped
   networks:
     - meeting-net
+  volumes:
+    - meeting-models:/models
 
 services:
   postgres:
@@ -136,6 +138,7 @@ volumes:
   meeting-postgres:
   meeting-minio:
   meeting-neo4j:
+  meeting-models:
 
 networks:
   meeting-net:

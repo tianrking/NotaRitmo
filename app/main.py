@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import uuid
 from contextlib import asynccontextmanager
 from typing import Annotated, Any
@@ -33,6 +34,7 @@ from app.schemas import (
     TingwuCallback,
 )
 from app.services.agent import run_agent
+from app.services.embeddings import embedding_service
 from app.services.storage import ensure_bucket, presigned_get, put_bytes
 from app.workflows.ingest import MeetingIngestWorkflow
 
@@ -269,16 +271,18 @@ def meeting_audio_url(
 
 
 @app.post("/v1/search")
-def search(
+async def search(
     payload: SearchRequest,
     db: Annotated[Session, Depends(get_db)],
 ) -> dict[str, Any]:
+    query_embedding = await asyncio.to_thread(embedding_service().query, payload.query)
     results = search_segments(
         db,
         query=payload.query,
         meeting_ids=payload.meeting_ids,
         project_id=payload.project_id,
         limit=payload.limit,
+        query_embedding=query_embedding,
     )
     return {
         "query": payload.query,

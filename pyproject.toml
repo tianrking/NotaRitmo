@@ -12,6 +12,7 @@ dependencies = [
   "alembic==1.16.5",
   "aliyun-python-sdk-core==2.16.0",
   "fastapi==0.116.1",
+  "fastembed==0.8.0",
   "graphiti-core==0.29.2",
   "httpx==0.28.1",
   "jieba==0.42.1",

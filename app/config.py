@@ -42,6 +42,9 @@ class Settings(BaseSettings):
     llm_model: str = ""
     embedding_model: str = ""
     embedding_dimensions: int = Field(default=384, ge=1, le=4096)
+    local_embeddings_enabled: bool = True
+    local_embedding_model: str = "intfloat/multilingual-e5-small"
+    local_embedding_cache: str = "/models/fastembed"
 
     graphiti_enabled: bool = False
     neo4j_uri: str = "bolt://neo4j:7687"

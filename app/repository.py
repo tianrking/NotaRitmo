@@ -113,6 +113,7 @@ def replace_normalized(db: Session, meeting: Meeting, normalized: dict[str, Any]
             text=item["text"],
             confidence=item["confidence"],
             overlap=item["overlap"],
+            embedding=item.get("embedding"),
         )
         db.add(segment)
         db.flush()
@@ -187,6 +188,7 @@ def replace_normalized(db: Session, meeting: Meeting, normalized: dict[str, Any]
                 status=item["status"],
                 evidence_segment_ids=evidence_ids,
                 extractor=item["extractor"],
+                embedding=item.get("embedding"),
             )
         )
 
@@ -304,6 +306,7 @@ def search_segments(
     time_from: datetime | None = None,
     time_to: datetime | None = None,
     limit: int = 20,
+    query_embedding: list[float] | None = None,
 ) -> list[dict[str, Any]]:
     terms = tokenize(query)
     if not terms:
@@ -328,16 +331,48 @@ def search_segments(
     if time_to:
         statement = statement.where(Meeting.created_at <= time_to)
 
+    base_statement = statement
     conditions = [Segment.text.ilike(f"%{term}%") for term in terms[:12] if term]
-    if conditions:
-        statement = statement.where(or_(*conditions))
+    lexical_rows = (
+        db.execute(
+            statement.where(or_(*conditions)).limit(max(limit * 5, 50))
+            if conditions
+            else statement.limit(max(limit * 5, 50))
+        ).all()
+    )
+    semantic_rows = []
+    if query_embedding:
+        semantic_rows = db.execute(
+            base_statement.where(Segment.embedding.is_not(None))
+            .order_by(Segment.embedding.cosine_distance(query_embedding))
+            .limit(max(limit * 5, 50))
+        ).all()
 
-    rows = db.execute(statement.limit(max(limit * 5, 50))).all()
+    candidates: dict[str, tuple[Any, Any, Any]] = {}
+    lexical_rank: dict[str, int] = {}
+    semantic_rank: dict[str, int] = {}
+    for rank, row in enumerate(lexical_rows, 1):
+        key = str(row[0].id)
+        candidates[key] = row
+        lexical_rank[key] = rank
+    for rank, row in enumerate(semantic_rows, 1):
+        key = str(row[0].id)
+        candidates[key] = row
+        semantic_rank[key] = rank
+
     ranked = []
-    for segment, speaker, meeting in rows:
+    for key, (segment, speaker, meeting) in candidates.items():
         lowered = segment.text.lower()
         matched = sum(1 for term in terms if term.lower() in lowered)
-        score = matched / max(len(terms), 1)
+        lexical_score = matched / max(len(terms), 1)
+        rrf = 0.0
+        if key in lexical_rank:
+            rrf += 1.0 / (60 + lexical_rank[key])
+        if key in semantic_rank:
+            rrf += 1.0 / (60 + semantic_rank[key])
+        semantic_score = (
+            round(1.0 / semantic_rank[key], 6) if key in semantic_rank else 0.0
+        )
         ranked.append(
             {
                 "segment_id": str(segment.id),
@@ -350,10 +385,25 @@ def search_segments(
                 "start_ms": segment.start_ms,
                 "end_ms": segment.end_ms,
                 "text": segment.text,
-                "score": round(score, 4),
+                "score": round(rrf, 6),
+                "lexical_score": round(lexical_score, 4),
+                "semantic_score": semantic_score,
+                "retrieval": (
+                    "hybrid"
+                    if key in lexical_rank and key in semantic_rank
+                    else "semantic"
+                    if key in semantic_rank
+                    else "lexical"
+                ),
             }
         )
-    ranked.sort(key=lambda item: (-item["score"], item["meeting_created_at"]))
+    ranked.sort(
+        key=lambda item: (
+            -item["score"],
+            -item["lexical_score"],
+            item["meeting_created_at"],
+        )
+    )
     return ranked[:limit]
 
 
