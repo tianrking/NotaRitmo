@@ -124,10 +124,22 @@ def main() -> None:
     k6_analysis = request(
         "POST",
         "/v1/analysis",
-        {"scope": {"mode": "all_meetings", "project_id": "k6"}},
+        {
+            "scope": {
+                "mode": "selected_meetings",
+                "meeting_ids": meeting_ids[:3],
+                "project_id": "k6",
+            }
+        },
     )
     assert k6_analysis["meeting_count"] == 3, k6_analysis
     assert k6_analysis["timeline"]["links"], k6_analysis["timeline"]
+    project_analysis = request(
+        "POST",
+        "/v1/analysis",
+        {"scope": {"mode": "all_meetings", "project_id": "k6"}},
+    )
+    assert project_analysis["meeting_count"] >= 3, project_analysis
 
     answer = request(
         "POST",
