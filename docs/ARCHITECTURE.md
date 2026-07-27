@@ -2,7 +2,7 @@
 
 ## 目标
 
-系统不是听悟客户端，而是独立的 Meeting Agent 平台。听悟只是第一个
+NotaRitmo 不是听悟客户端，而是独立的 Linux 会议分析与记忆平台。听悟只是第一个
 `MeetingIntelligenceProvider`。
 
 ```mermaid

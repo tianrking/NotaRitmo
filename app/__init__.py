@@ -1,2 +1,1 @@
-"""Meeting Agent Platform."""
-
+"""NotaRitmo Linux meeting analysis platform."""

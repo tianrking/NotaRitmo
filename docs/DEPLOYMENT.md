@@ -2,10 +2,17 @@
 
 ## WSL开发
 
-项目路径：
+当前开发机项目路径：
 
 ```text
 /home/user/meeting-agent-platform
+```
+
+服务器或新开发机使用仓库名作为目录：
+
+```bash
+git clone https://github.com/tianrking/NotaRitmo.git
+cd NotaRitmo
 ```
 
 项目使用独立 Compose 名称、网络、数据卷和端口，不停止现有 ASR、LiteLLM、

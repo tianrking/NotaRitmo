@@ -1,8 +1,14 @@
-# Meeting Agent Platform
+# NotaRitmo
 
-这是一个以证据为中心、与ASR供应商解耦的会议智能平台。第一阶段由通义听悟提供
+NotaRitmo 当前主线是一个运行在 Linux 上、以证据为中心且与 ASR 供应商解耦的
+会议分析产品后端。第一阶段由通义听悟提供
 单场音频的转写、说话人、章节、摘要、待办和关键词；平台把这些结果规范化后，提供
 单会议与跨会议的检索、问答、汇总和原文时间点验证。
+
+## 分支
+
+- `main`：Linux 会议分析、记忆、检索和 API 主线。
+- `android-legency`：早期 Android 本地语音识别实验原貌。
 
 ## 核心边界
 
@@ -35,7 +41,8 @@
 ## 快速启动
 
 ```bash
-cd /home/user/meeting-agent-platform
+git clone https://github.com/tianrking/NotaRitmo.git
+cd NotaRitmo
 cp .env.example .env
 docker compose up -d --build
 docker compose ps

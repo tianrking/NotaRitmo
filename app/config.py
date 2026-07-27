@@ -8,7 +8,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore", case_sensitive=False)
 
-    app_name: str = "Meeting Agent Platform"
+    app_name: str = "NotaRitmo"
     app_version: str = "0.1.0"
     database_url: str = "postgresql+psycopg://meeting:meeting@postgres:5432/meeting"
 
@@ -55,4 +55,3 @@ def get_settings() -> Settings:
 
 
 settings = get_settings()
-

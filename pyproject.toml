@@ -3,9 +3,9 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "meeting-agent-platform"
+name = "notaritmo"
 version = "0.1.0"
-description = "Evidence-first, provider-independent meeting memory and agent platform"
+description = "Evidence-first Linux meeting analysis, memory, and retrieval platform"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -47,4 +47,3 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
-
