@@ -10,12 +10,13 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends ffmpeg curl ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-COPY pyproject.toml README.md /app/
-RUN mkdir -p /app/app && touch /app/app/__init__.py
+COPY pyproject.toml /app/
+RUN touch /app/README.md && mkdir -p /app/app && touch /app/app/__init__.py
 RUN pip install --upgrade pip && pip install ".[dev]"
 RUN pip uninstall -y notaritmo && rm -rf /app/app
 
 COPY app /app/app
+COPY README.md /app/README.md
 COPY alembic.ini /app/alembic.ini
 COPY migrations /app/migrations
 COPY fixtures /app/fixtures
