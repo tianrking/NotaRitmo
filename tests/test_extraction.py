@@ -1,4 +1,4 @@
-from app.services.extraction import _validate_components, canonical_input_hash
+from app.services.extraction import _cost, _validate_components, canonical_input_hash
 
 
 def canonical() -> dict:
@@ -55,3 +55,15 @@ def test_unified_extraction_discards_items_without_real_evidence() -> None:
     assert result["summary"]["evidence_ordinals"] == [0]
     assert [item["text"] for item in result["decisions"]] == ["采用灰度发布"]
     assert result["action_items"][0]["owner"] == "李四"
+
+
+def test_cost_uses_configured_per_million_rates(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.services.extraction.settings.llm_input_cost_per_million", 2.0
+    )
+    monkeypatch.setattr(
+        "app.services.extraction.settings.llm_output_cost_per_million", 8.0
+    )
+    assert str(
+        _cost({"input_tokens": 1000, "output_tokens": 500, "total_tokens": 1500})
+    ) == "0.00600000"
