@@ -51,7 +51,7 @@ class GraphMemory:
         await self.driver.verify_connectivity()
         async with self.driver.session() as session:
             result = await session.run(
-                "MATCH (n) RETURN count(n) AS nodes "
+                "CALL { MATCH (n) RETURN count(n) AS nodes } "
                 "CALL { MATCH ()-[r]->() RETURN count(r) AS relationships } "
                 "RETURN nodes, relationships"
             )
