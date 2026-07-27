@@ -182,6 +182,209 @@ def _provider_artifacts(bundle: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _evidence_ordinals(
+    segments: list[dict[str, Any]],
+    *,
+    text: str | None = None,
+    start_ms: int | None = None,
+    end_ms: int | None = None,
+    limit: int = 3,
+) -> list[int]:
+    if start_ms is not None or end_ms is not None:
+        start = start_ms if start_ms is not None else 0
+        end = end_ms if end_ms is not None else 2**63 - 1
+        matched = [
+            segment["ordinal"]
+            for segment in segments
+            if segment["end_ms"] >= start and segment["start_ms"] <= end
+        ]
+        if matched:
+            return matched[:limit]
+    terms = tokenize(text or "")
+    ranked: list[tuple[int, int]] = []
+    for segment in segments:
+        score = sum(1 for term in terms if term in segment["text"].lower())
+        if score:
+            ranked.append((score, segment["ordinal"]))
+    ranked.sort(key=lambda item: (-item[0], item[1]))
+    return [ordinal for _, ordinal in ranked[:limit]]
+
+
+def _normalize_chapters(
+    chapters: list[Any], segments: list[dict[str, Any]], summary: str
+) -> list[dict[str, Any]]:
+    values: list[dict[str, Any]] = []
+    for index, item in enumerate(chapters):
+        if not isinstance(item, dict):
+            continue
+        title = (
+            item.get("Title")
+            or item.get("title")
+            or item.get("Headline")
+            or f"章节 {index + 1}"
+        )
+        chapter_summary = (
+            item.get("Summary")
+            or item.get("summary")
+            or item.get("Content")
+            or item.get("Text")
+            or ""
+        )
+        start = int(item.get("Start", item.get("start_ms", 0)) or 0)
+        end = int(item.get("End", item.get("end_ms", start)) or start)
+        values.append(
+            {
+                "title": str(title),
+                "summary": str(chapter_summary),
+                "start_ms": start,
+                "end_ms": end,
+                "evidence_ordinals": _evidence_ordinals(
+                    segments, text=str(chapter_summary), start_ms=start, end_ms=end, limit=20
+                ),
+            }
+        )
+    if values:
+        return values
+    return [
+        {
+            "title": "会议内容",
+            "summary": summary,
+            "start_ms": segments[0]["start_ms"] if segments else 0,
+            "end_ms": segments[-1]["end_ms"] if segments else 0,
+            "evidence_ordinals": [item["ordinal"] for item in segments],
+        }
+    ]
+
+
+def _provider_actions(
+    actions: list[Any], segments: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    values: list[dict[str, Any]] = []
+    for item in actions:
+        if isinstance(item, str):
+            task, owner, due_date = item, None, None
+        elif isinstance(item, dict):
+            task = (
+                item.get("Task")
+                or item.get("Content")
+                or item.get("Text")
+                or item.get("Action")
+            )
+            owner = item.get("Owner") or item.get("Assignee") or item.get("Responsible")
+            due_date = item.get("DueDate") or item.get("Deadline")
+        else:
+            continue
+        if not task:
+            continue
+        evidence_text = " ".join(str(value) for value in (task, owner, due_date) if value)
+        values.append(
+            {
+                "task": str(task),
+                "owner": str(owner) if owner else None,
+                "due_date": str(due_date) if due_date else None,
+                "status": "open",
+                "confidence": 1.0,
+                "evidence_ordinals": _evidence_ordinals(
+                    segments, text=evidence_text, limit=3
+                ),
+            }
+        )
+    return values
+
+
+def _rule_facts(segments: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    markers = {
+        "decisions": ("决定", "确定", "结论", "改到", "改为", "采用", "最终", "统一"),
+        "action_items": ("负责", "待办", "需要完成", "跟进", "截止", "安排"),
+        "risks": ("风险", "可能失败", "阻塞", "隐患", "延迟", "来不及", "不稳定"),
+        "open_questions": ("待确认", "还没定", "未确定", "需要讨论", "问题是", "？", "?"),
+    }
+    values: dict[str, list[dict[str, Any]]] = {key: [] for key in markers}
+    for segment in segments:
+        text = segment["text"]
+        evidence = [segment["ordinal"]]
+        if any(marker in text for marker in markers["decisions"]):
+            values["decisions"].append(
+                {
+                    "text": text,
+                    "status": "candidate",
+                    "confidence": 0.72,
+                    "evidence_ordinals": evidence,
+                }
+            )
+        if any(marker in text for marker in markers["action_items"]):
+            owner_match = re.search(r"([\u4e00-\u9fff]{2,4})负责", text)
+            due_match = re.search(
+                r"((?:20\d{2}[-年/.])?\d{1,2}[-月/.]\d{1,2}日?)", text
+            )
+            values["action_items"].append(
+                {
+                    "task": text,
+                    "owner": owner_match.group(1) if owner_match else None,
+                    "due_date": due_match.group(1) if due_match else None,
+                    "status": "open",
+                    "confidence": 0.7,
+                    "evidence_ordinals": evidence,
+                }
+            )
+        if any(marker in text for marker in markers["risks"]):
+            values["risks"].append(
+                {
+                    "text": text,
+                    "status": "open",
+                    "confidence": 0.7,
+                    "evidence_ordinals": evidence,
+                }
+            )
+        if any(marker in text for marker in markers["open_questions"]):
+            values["open_questions"].append(
+                {
+                    "text": text,
+                    "status": "open",
+                    "confidence": 0.68,
+                    "evidence_ordinals": evidence,
+                }
+            )
+    return values
+
+
+def _deduplicate(items: list[dict[str, Any]], field: str) -> list[dict[str, Any]]:
+    seen: set[str] = set()
+    values = []
+    for item in items:
+        key = re.sub(r"\W+", "", str(item.get(field, "")).lower())
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        values.append(item)
+    return values
+
+
+def _speaker_stats(
+    speakers: list[dict[str, Any]], segments: list[dict[str, Any]], duration_ms: int | None
+) -> list[dict[str, Any]]:
+    stats: list[dict[str, Any]] = []
+    total = max(duration_ms or sum(s["end_ms"] - s["start_ms"] for s in segments), 1)
+    for speaker in speakers:
+        own = [
+            segment
+            for segment in segments
+            if segment["provider_speaker_id"] == speaker["provider_speaker_id"]
+        ]
+        speaking_ms = sum(max(item["end_ms"] - item["start_ms"], 0) for item in own)
+        stats.append(
+            {
+                **speaker,
+                "segment_count": len(own),
+                "speaking_ms": speaking_ms,
+                "share": round(speaking_ms / total, 4),
+                "character_count": sum(len(item["text"]) for item in own),
+                "evidence_ordinals": [item["ordinal"] for item in own],
+            }
+        )
+    return stats
+
+
 def normalize_tingwu(bundle: dict[str, Any]) -> dict[str, Any]:
     transcription = _unwrap(bundle, "Transcription")
     speakers, segments, words, duration_ms = _segments(transcription)
@@ -207,31 +410,35 @@ def normalize_tingwu(bundle: dict[str, Any]) -> dict[str, Any]:
         if provider_words:
             keywords = provider_words
 
-    fallback_summary = " ".join(segment["text"] for segment in segments[:5])
+    fallback_summary = " ".join(segment["text"] for segment in segments[:8])
     summary = provider["summary"] or fallback_summary or "暂无可用摘要。"
-
-    chapters = provider["chapters"]
-    if not chapters:
-        chapters = [
-            {
-                "title": "会议内容",
-                "summary": summary,
-                "start_ms": segments[0]["start_ms"] if segments else 0,
-                "end_ms": segments[-1]["end_ms"] if segments else 0,
-            }
-        ]
+    chapters = _normalize_chapters(provider["chapters"], segments, summary)
+    facts = _rule_facts(segments)
+    provider_actions = _provider_actions(provider["action_items"], segments)
+    action_items = _deduplicate(provider_actions + facts["action_items"], "task")
+    summary_evidence = _evidence_ordinals(segments, text=summary, limit=8)
 
     mindmap = provider["mindmap"] or {
         "name": "会议",
         "children": [
             {
                 "name": str(
-                    chapter.get("Title")
-                    or chapter.get("title")
-                    or chapter.get("Headline")
+                    chapter.get("title")
                     or f"章节 {index + 1}"
                 ),
-                "children": [],
+                "start_ms": chapter.get("start_ms", 0),
+                "end_ms": chapter.get("end_ms", 0),
+                "evidence_ordinals": chapter.get("evidence_ordinals", []),
+                "children": [
+                    {
+                        "name": segment["text"],
+                        "start_ms": segment["start_ms"],
+                        "end_ms": segment["end_ms"],
+                        "evidence_ordinals": [segment["ordinal"]],
+                    }
+                    for segment in segments
+                    if segment["ordinal"] in chapter.get("evidence_ordinals", [])
+                ][:5],
             }
             for index, chapter in enumerate(chapters)
         ],
@@ -241,7 +448,31 @@ def normalize_tingwu(bundle: dict[str, Any]) -> dict[str, Any]:
         {
             "kind": "summary",
             "source": "tingwu" if provider["summary"] else "fallback",
-            "data": {"text": summary},
+            "data": {"text": summary, "evidence_ordinals": summary_evidence},
+        },
+        {
+            "kind": "detailed_summary",
+            "source": "derived",
+            "data": {
+                "overview": summary,
+                "decisions": facts["decisions"],
+                "action_items": action_items,
+                "risks": facts["risks"],
+                "open_questions": facts["open_questions"],
+                "evidence_ordinals": sorted(
+                    {
+                        ordinal
+                        for group in (
+                            facts["decisions"],
+                            action_items,
+                            facts["risks"],
+                            facts["open_questions"],
+                        )
+                        for item in group
+                        for ordinal in item["evidence_ordinals"]
+                    }
+                ),
+            },
         },
         {
             "kind": "chapters",
@@ -255,7 +486,23 @@ def normalize_tingwu(bundle: dict[str, Any]) -> dict[str, Any]:
             "source": "tingwu" if provider["mindmap"] else "derived",
             "data": mindmap,
         },
-        {"kind": "action_items", "source": "tingwu", "data": {"items": provider["action_items"]}},
+        {
+            "kind": "action_items",
+            "source": "tingwu+rules" if provider_actions else "rules",
+            "data": {"items": action_items},
+        },
+        {"kind": "decisions", "source": "rules", "data": {"items": facts["decisions"]}},
+        {"kind": "risks", "source": "rules", "data": {"items": facts["risks"]}},
+        {
+            "kind": "open_questions",
+            "source": "rules",
+            "data": {"items": facts["open_questions"]},
+        },
+        {
+            "kind": "speaker_stats",
+            "source": "derived",
+            "data": {"items": _speaker_stats(speakers, segments, duration_ms)},
+        },
         {
             "kind": "key_information",
             "source": "tingwu",
@@ -264,25 +511,47 @@ def normalize_tingwu(bundle: dict[str, Any]) -> dict[str, Any]:
     ]
 
     memories: list[dict[str, Any]] = []
-    decision_markers = ("决定", "确定", "改到", "改为", "采用", "最终")
-    action_markers = ("负责", "待办", "需要完成", "跟进", "截止")
-    for segment in segments:
-        kind = None
-        if any(marker in segment["text"] for marker in decision_markers):
-            kind = "decision"
-        elif any(marker in segment["text"] for marker in action_markers):
-            kind = "action_item"
-        if kind:
+    for kind, values, content_field in (
+        ("decision", facts["decisions"], "text"),
+        ("action_item", action_items, "task"),
+        ("risk", facts["risks"], "text"),
+        ("open_question", facts["open_questions"], "text"),
+    ):
+        for item in values:
+            subject = item.get("owner") if kind == "action_item" else None
             memories.append(
                 {
                     "kind": kind,
-                    "subject": None,
-                    "content": segment["text"],
-                    "status": "candidate",
-                    "evidence_ordinals": [segment["ordinal"]],
-                    "extractor": {"name": "rule-baseline", "version": "1"},
+                    "subject": subject,
+                    "content": item[content_field],
+                    "status": "confirmed" if item in provider_actions else "candidate",
+                    "evidence_ordinals": item["evidence_ordinals"],
+                    "extractor": {
+                        "name": "tingwu" if item in provider_actions else "rules",
+                        "version": "2",
+                        "confidence": item.get("confidence"),
+                        "structured": item,
+                    },
                 }
             )
+    for item in keywords[:15]:
+        memories.append(
+            {
+                "kind": "topic",
+                "subject": item["text"],
+                "content": item["text"],
+                "status": "observed",
+                "evidence_ordinals": _evidence_ordinals(
+                    segments, text=item["text"], limit=5
+                ),
+                "extractor": {
+                    "name": "tingwu+local-keywords",
+                    "version": "2",
+                    "weight": item.get("weight"),
+                    "count": item.get("count"),
+                },
+            }
+        )
 
     return {
         "duration_ms": duration_ms,

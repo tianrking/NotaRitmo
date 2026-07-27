@@ -138,6 +138,26 @@ def replace_normalized(db: Session, meeting: Meeting, normalized: dict[str, Any]
             )
         )
 
+    def materialize(value: Any) -> Any:
+        if isinstance(value, dict):
+            result = {key: materialize(child) for key, child in value.items()}
+            ordinals = result.pop("evidence_ordinals", None)
+            if isinstance(ordinals, list):
+                result["evidence"] = [
+                    {
+                        "segment_id": str(segment_by_ordinal[ordinal].id),
+                        "ordinal": ordinal,
+                        "start_ms": segment_by_ordinal[ordinal].start_ms,
+                        "end_ms": segment_by_ordinal[ordinal].end_ms,
+                    }
+                    for ordinal in ordinals
+                    if ordinal in segment_by_ordinal
+                ]
+            return result
+        if isinstance(value, list):
+            return [materialize(child) for child in value]
+        return value
+
     for item in normalized["artifacts"]:
         db.add(
             Artifact(
@@ -146,7 +166,7 @@ def replace_normalized(db: Session, meeting: Meeting, normalized: dict[str, Any]
                 kind=item["kind"],
                 version=1,
                 source=item["source"],
-                data=item["data"],
+                data=materialize(item["data"]),
             )
         )
 
