@@ -1,0 +1,88 @@
+{
+  "title": "K6 OTA进度复盘",
+  "project_id": "k6",
+  "audio_uri": "https://example.invalid/k6-ota-02.m4a",
+  "source_language": "cn",
+  "raw_result": {
+    "Transcription": {
+      "TaskId": "fixture-task-02",
+      "Transcription": {
+        "AudioInfo": {
+          "Size": 2097152,
+          "Duration": 240000,
+          "SampleRate": 16000,
+          "Language": "cn"
+        },
+        "Paragraphs": [
+          {
+            "ParagraphId": "p1",
+            "SpeakerId": "1",
+            "Words": [
+              {"Id": 1, "SentenceId": 1, "Start": 1200, "End": 5200, "Text": "回滚测试发现部分机型断线后无法恢复。"},
+              {"Id": 2, "SentenceId": 2, "Start": 5600, "End": 9000, "Text": "最终决定首版发布日期改到八月十五日。"}
+            ]
+          },
+          {
+            "ParagraphId": "p2",
+            "SpeakerId": "2",
+            "Words": [
+              {"Id": 3, "SentenceId": 3, "Start": 9500, "End": 13000, "Text": "王五负责Android重连和兼容性测试。"},
+              {"Id": 4, "SentenceId": 4, "Start": 13500, "End": 17000, "Text": "李四继续跟进固件自动回滚。"}
+            ]
+          }
+        ],
+        "AudioSegments": [[1200, 17000]]
+      }
+    },
+    "Summarization": {
+      "Summarization": {
+        "ParagraphSummary": "因部分机型断线恢复失败，发布日期调整到八月十五日，并重新分配兼容性测试任务。",
+        "MindMap": {
+          "name": "OTA复盘",
+          "children": [
+            {"name": "断线恢复", "children": []},
+            {"name": "发布日期", "children": []},
+            {"name": "任务分配", "children": []}
+          ]
+        }
+      }
+    },
+    "AutoChapters": {
+      "AutoChapters": {
+        "Chapters": [
+          {
+            "Title": "问题与调整",
+            "Summary": "复盘兼容性问题并调整发布日期。",
+            "Start": 1200,
+            "End": 17000
+          }
+        ]
+      }
+    },
+    "MeetingAssistance": {
+      "MeetingAssistance": {
+        "Keywords": [
+          {"Text": "OTA", "Count": 4, "Weight": 1.0},
+          {"Text": "Android重连", "Count": 2, "Weight": 0.8},
+          {"Text": "自动回滚", "Count": 2, "Weight": 0.8}
+        ],
+        "Actions": [
+          {
+            "Task": "完成Android重连和兼容性测试",
+            "Owner": "王五",
+            "DueDate": "2026-08-10"
+          },
+          {
+            "Task": "继续验证固件自动回滚",
+            "Owner": "李四",
+            "DueDate": "2026-08-08"
+          }
+        ],
+        "KeyInformation": [
+          {"Text": "首版发布日期改到八月十五日", "Start": 5600, "End": 9000}
+        ]
+      }
+    }
+  }
+}
+

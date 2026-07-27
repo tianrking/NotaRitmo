@@ -1,0 +1,82 @@
+{
+  "title": "K6 OTA方案评审",
+  "project_id": "k6",
+  "audio_uri": "https://example.invalid/k6-ota-01.m4a",
+  "source_language": "cn",
+  "raw_result": {
+    "Transcription": {
+      "TaskId": "fixture-task-01",
+      "Transcription": {
+        "AudioInfo": {
+          "Size": 1048576,
+          "Duration": 180000,
+          "SampleRate": 16000,
+          "Language": "cn"
+        },
+        "Paragraphs": [
+          {
+            "ParagraphId": "p1",
+            "SpeakerId": "1",
+            "Words": [
+              {"Id": 1, "SentenceId": 1, "Start": 1000, "End": 2500, "Text": "今天讨论K6的OTA升级方案。"},
+              {"Id": 2, "SentenceId": 2, "Start": 3000, "End": 6000, "Text": "我们决定Android首版采用分包传输。"}
+            ]
+          },
+          {
+            "ParagraphId": "p2",
+            "SpeakerId": "2",
+            "Words": [
+              {"Id": 3, "SentenceId": 3, "Start": 7000, "End": 10500, "Text": "李四负责升级失败后的自动回滚验证。"},
+              {"Id": 4, "SentenceId": 4, "Start": 11000, "End": 14000, "Text": "原计划七月三十日完成首版。"}
+            ]
+          }
+        ],
+        "AudioSegments": [[1000, 14000]]
+      }
+    },
+    "Summarization": {
+      "Summarization": {
+        "ParagraphSummary": "会议确定K6 OTA采用分包传输，并安排李四验证失败回滚。",
+        "MindMap": {
+          "name": "K6 OTA",
+          "children": [
+            {"name": "分包传输", "children": []},
+            {"name": "失败回滚", "children": []}
+          ]
+        }
+      }
+    },
+    "AutoChapters": {
+      "AutoChapters": {
+        "Chapters": [
+          {
+            "Title": "升级方案",
+            "Summary": "讨论分包传输和失败回滚。",
+            "Start": 1000,
+            "End": 14000
+          }
+        ]
+      }
+    },
+    "MeetingAssistance": {
+      "MeetingAssistance": {
+        "Keywords": [
+          {"Text": "K6", "Count": 3, "Weight": 1.0},
+          {"Text": "OTA", "Count": 3, "Weight": 1.0},
+          {"Text": "失败回滚", "Count": 1, "Weight": 0.7}
+        ],
+        "Actions": [
+          {
+            "Task": "验证升级失败后的自动回滚",
+            "Owner": "李四",
+            "DueDate": "2026-07-30"
+          }
+        ],
+        "KeyInformation": [
+          {"Text": "Android首版采用分包传输", "Start": 3000, "End": 6000}
+        ]
+      }
+    }
+  }
+}
+
