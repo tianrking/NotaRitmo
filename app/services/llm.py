@@ -1,4 +1,5 @@
 import json
+import re
 from typing import Any
 
 import httpx
@@ -52,6 +53,59 @@ class LLMClient:
             response.raise_for_status()
             data = response.json()
             return data["choices"][0]["message"]["content"]
+
+    async def complete_json(
+        self,
+        *,
+        system: str,
+        user: str,
+    ) -> tuple[dict[str, Any], dict[str, int]]:
+        if not self.enabled:
+            raise RuntimeError("LLM is disabled")
+        payload = {
+            "model": settings.llm_model,
+            "temperature": 0,
+            "response_format": {"type": "json_object"},
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+        }
+        async with httpx.AsyncClient(timeout=300) as client:
+            response = await client.post(
+                f"{self.base_url}/chat/completions",
+                headers=self.headers,
+                json=payload,
+            )
+            response.raise_for_status()
+            data = response.json()
+        content = data["choices"][0]["message"]["content"]
+        if isinstance(content, list):
+            content = "".join(
+                str(item.get("text", "")) if isinstance(item, dict) else str(item)
+                for item in content
+            )
+        try:
+            result = json.loads(content)
+        except json.JSONDecodeError:
+            match = re.search(r"\{.*\}", str(content), re.DOTALL)
+            if not match:
+                raise ValueError("LLM did not return a JSON object") from None
+            result = json.loads(match.group(0))
+        if not isinstance(result, dict):
+            raise ValueError("LLM JSON root must be an object")
+        usage = data.get("usage") or {}
+        input_tokens = int(usage.get("prompt_tokens", usage.get("input_tokens", 0)) or 0)
+        output_tokens = int(
+            usage.get("completion_tokens", usage.get("output_tokens", 0)) or 0
+        )
+        return result, {
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "total_tokens": int(
+                usage.get("total_tokens", input_tokens + output_tokens) or 0
+            ),
+        }
 
     async def answer_with_context(
         self, query: str, context: dict[str, Any]

@@ -59,6 +59,7 @@ from app.schemas import (
 )
 from app.services.agent import run_agent, scope_meeting_ids
 from app.services.embeddings import embedding_service
+from app.services.extraction import extraction_stats
 from app.services.graph_memory import graph_for_meeting, graph_health, graph_search
 from app.services.storage import (
     ensure_bucket,
@@ -505,6 +506,23 @@ def analytics_overview(
     project_id: str | None = None,
 ) -> dict[str, Any]:
     return overview(db, project_id)
+
+
+@app.get("/v1/analytics/extractions")
+def all_extraction_usage(
+    db: Annotated[Session, Depends(get_db)],
+) -> dict[str, Any]:
+    return extraction_stats(db)
+
+
+@app.get("/v1/meetings/{meeting_id}/extractions")
+def meeting_extraction_usage(
+    meeting_id: UUID,
+    db: Annotated[Session, Depends(get_db)],
+) -> dict[str, Any]:
+    if not get_meeting(db, meeting_id):
+        raise HTTPException(status_code=404, detail="meeting not found")
+    return extraction_stats(db, meeting_id)
 
 
 @app.post("/v1/providers/tingwu/callback", status_code=status.HTTP_202_ACCEPTED)

@@ -42,6 +42,12 @@ class Settings(BaseSettings):
     llm_base_url: str = "http://host.docker.internal:4000/v1"
     llm_api_key: str = ""
     llm_model: str = ""
+    llm_provider: str = "openai-compatible"
+    llm_prompt_version: str = "meeting-unified-v1"
+    llm_schema_version: str = "meeting-components-v1"
+    llm_input_cost_per_million: float = 0.0
+    llm_output_cost_per_million: float = 0.0
+    llm_max_transcript_characters: int = 240_000
     embedding_model: str = ""
     embedding_dimensions: int = Field(default=384, ge=1, le=4096)
     local_embeddings_enabled: bool = True

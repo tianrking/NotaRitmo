@@ -18,7 +18,7 @@ with workflow.unsafe.imports_passed_through():
     from app.services.embeddings import embedding_service
     from app.services.asr import asr_registry
     from app.services.graph_memory import ingest_episode
-    from app.services.intelligence import build_intelligence
+    from app.services.extraction import extract_with_cache
     from app.services.storage import provider_audio_url
 
 
@@ -57,7 +57,7 @@ async def process_meeting_activity(meeting_id: str) -> dict:
                 db.commit()
 
             normalized = asr_registry.get(meeting.source_provider).normalize(raw)
-            normalized.update(build_intelligence(normalized))
+            normalized.update(await extract_with_cache(db, meeting, normalized))
             embedder = embedding_service()
             segment_vectors = await asyncio.to_thread(
                 embedder.documents,
