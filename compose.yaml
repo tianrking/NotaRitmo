@@ -15,6 +15,15 @@ x-app: &app
     - meeting-models:/models
 
 services:
+  model-init:
+    image: alpine:3.22
+    command: ["sh", "-c", "mkdir -p /models/fastembed && chown -R 10001:10001 /models"]
+    volumes:
+      - meeting-models:/models
+    restart: "no"
+    networks:
+      - meeting-net
+
   postgres:
     image: pgvector/pgvector:pg16
     environment:
@@ -102,6 +111,8 @@ services:
         condition: service_started
       neo4j:
         condition: service_healthy
+      model-init:
+        condition: service_completed_successfully
 
   worker:
     <<: *app
@@ -115,6 +126,8 @@ services:
         condition: service_started
       neo4j:
         condition: service_healthy
+      model-init:
+        condition: service_completed_successfully
 
   neo4j:
     image: neo4j:5.26-community
