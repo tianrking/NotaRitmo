@@ -36,6 +36,7 @@ from app.repository import (
     list_conversations,
     list_meetings,
     meeting_memories,
+    meeting_pipeline_runs,
     meeting_report,
     memory_timeline,
     overview,
@@ -523,6 +524,16 @@ def meeting_extraction_usage(
     if not get_meeting(db, meeting_id):
         raise HTTPException(status_code=404, detail="meeting not found")
     return extraction_stats(db, meeting_id)
+
+
+@app.get("/v1/meetings/{meeting_id}/pipeline-runs")
+def pipeline_runs_for_meeting(
+    meeting_id: UUID,
+    db: Annotated[Session, Depends(get_db)],
+) -> dict[str, Any]:
+    if not get_meeting(db, meeting_id):
+        raise HTTPException(status_code=404, detail="meeting not found")
+    return {"meeting_id": str(meeting_id), "runs": meeting_pipeline_runs(db, meeting_id)}
 
 
 @app.post("/v1/providers/tingwu/callback", status_code=status.HTTP_202_ACCEPTED)

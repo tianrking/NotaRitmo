@@ -4,7 +4,14 @@ from temporalio.client import Client
 from temporalio.worker import Worker
 
 from app.config import settings
-from app.workflows.ingest import MeetingIngestWorkflow, process_meeting_activity
+from app.workflows.ingest import (
+    MeetingIngestWorkflow,
+    extract_activity,
+    graph_activity,
+    normalize_activity,
+    prepare_audio_activity,
+    transcribe_activity,
+)
 
 
 async def main() -> None:
@@ -22,11 +29,16 @@ async def main() -> None:
         client,
         task_queue=settings.temporal_task_queue,
         workflows=[MeetingIngestWorkflow],
-        activities=[process_meeting_activity],
+        activities=[
+            prepare_audio_activity,
+            transcribe_activity,
+            normalize_activity,
+            extract_activity,
+            graph_activity,
+        ],
     )
     await worker.run()
 
 
 if __name__ == "__main__":
     asyncio.run(main())
-

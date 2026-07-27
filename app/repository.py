@@ -17,6 +17,8 @@ from app.models import (
     MeetingAccess,
     MemoryLink,
     MemoryRecord,
+    PipelineRun,
+    PipelineStage,
     QueryAudit,
     Segment,
     Speaker,
@@ -81,6 +83,261 @@ def list_meetings(db: Session, project_id: str | None = None) -> list[Meeting]:
     if project_id:
         statement = statement.where(Meeting.project_id == project_id)
     return list(db.scalars(statement.order_by(Meeting.created_at.desc())).all())
+
+
+def meeting_pipeline_runs(db: Session, meeting_id: uuid.UUID) -> list[dict[str, Any]]:
+    runs = list(
+        db.scalars(
+            select(PipelineRun)
+            .where(
+                PipelineRun.meeting_id == meeting_id,
+                PipelineRun.tenant_id == settings.default_tenant_id,
+            )
+            .order_by(PipelineRun.started_at.desc())
+        ).all()
+    )
+    stages_by_run: dict[uuid.UUID, list[PipelineStage]] = {}
+    if runs:
+        for stage in db.scalars(
+            select(PipelineStage)
+            .where(PipelineStage.pipeline_run_id.in_([run.id for run in runs]))
+            .order_by(PipelineStage.started_at)
+        ).all():
+            stages_by_run.setdefault(stage.pipeline_run_id, []).append(stage)
+    return [
+        {
+            "id": str(run.id),
+            "workflow_id": run.workflow_id,
+            "workflow_run_id": run.workflow_run_id,
+            "status": run.status,
+            "started_at": run.started_at.isoformat(),
+            "completed_at": run.completed_at.isoformat() if run.completed_at else None,
+            "stages": [
+                {
+                    "stage": stage.stage,
+                    "status": stage.status,
+                    "attempt_count": stage.attempt_count,
+                    "output": stage.output,
+                    "error": stage.error,
+                    "started_at": stage.started_at.isoformat(),
+                    "completed_at": (
+                        stage.completed_at.isoformat() if stage.completed_at else None
+                    ),
+                }
+                for stage in stages_by_run.get(run.id, [])
+            ],
+        }
+        for run in runs
+    ]
+
+
+def replace_canonical(db: Session, meeting: Meeting, canonical: dict[str, Any]) -> None:
+    """Atomically replace ASR canonical data and invalidate all downstream products."""
+
+    db.execute(delete(MemoryRecord).where(MemoryRecord.meeting_id == meeting.id))
+    db.execute(delete(Artifact).where(Artifact.meeting_id == meeting.id))
+    db.execute(delete(Segment).where(Segment.meeting_id == meeting.id))
+    db.execute(delete(Speaker).where(Speaker.meeting_id == meeting.id))
+    db.flush()
+
+    speakers: dict[str, Speaker] = {}
+    for item in canonical["speakers"]:
+        speaker = Speaker(
+            meeting_id=meeting.id,
+            provider_speaker_id=item["provider_speaker_id"],
+            display_name=item["display_name"],
+        )
+        db.add(speaker)
+        db.flush()
+        speakers[item["provider_speaker_id"]] = speaker
+
+    segments: dict[int, Segment] = {}
+    for item in canonical["segments"]:
+        speaker = speakers.get(item["provider_speaker_id"])
+        segment = Segment(
+            tenant_id=meeting.tenant_id,
+            meeting_id=meeting.id,
+            speaker_id=speaker.id if speaker else None,
+            paragraph_id=item["paragraph_id"],
+            sentence_id=item["sentence_id"],
+            ordinal=item["ordinal"],
+            start_ms=item["start_ms"],
+            end_ms=item["end_ms"],
+            text=item["text"],
+            confidence=item["confidence"],
+            overlap=item["overlap"],
+            embedding=item.get("embedding"),
+        )
+        db.add(segment)
+        db.flush()
+        segments[item["ordinal"]] = segment
+
+    for item in canonical.get("words", []):
+        segment = segments.get(item["segment_ordinal"])
+        if not segment:
+            continue
+        speaker = speakers.get(item["provider_speaker_id"])
+        db.add(
+            Word(
+                tenant_id=meeting.tenant_id,
+                meeting_id=meeting.id,
+                segment_id=segment.id,
+                speaker_id=speaker.id if speaker else None,
+                provider_word_id=item["provider_word_id"],
+                ordinal=item["ordinal"],
+                start_ms=item["start_ms"],
+                end_ms=item["end_ms"],
+                text=item["text"],
+                confidence=item["confidence"],
+            )
+        )
+    meeting.duration_ms = canonical.get("duration_ms")
+    meeting.status = "CANONICAL_READY"
+    meeting.error = None
+    db.commit()
+
+
+def canonical_payload(db: Session, meeting: Meeting) -> dict[str, Any]:
+    speaker_rows = list(
+        db.scalars(
+            select(Speaker)
+            .where(Speaker.meeting_id == meeting.id)
+            .order_by(Speaker.provider_speaker_id)
+        ).all()
+    )
+    speaker_by_id = {speaker.id: speaker for speaker in speaker_rows}
+    segment_rows = list(
+        db.scalars(
+            select(Segment)
+            .where(Segment.meeting_id == meeting.id)
+            .order_by(Segment.ordinal)
+        ).all()
+    )
+    segment_by_id = {segment.id: segment for segment in segment_rows}
+    return {
+        "duration_ms": meeting.duration_ms,
+        "speakers": [
+            {
+                "provider_speaker_id": speaker.provider_speaker_id,
+                "display_name": speaker.display_name,
+            }
+            for speaker in speaker_rows
+        ],
+        "segments": [
+            {
+                "provider_speaker_id": (
+                    speaker_by_id[segment.speaker_id].provider_speaker_id
+                    if segment.speaker_id in speaker_by_id
+                    else "unknown"
+                ),
+                "paragraph_id": segment.paragraph_id,
+                "sentence_id": segment.sentence_id,
+                "ordinal": segment.ordinal,
+                "start_ms": segment.start_ms,
+                "end_ms": segment.end_ms,
+                "text": segment.text,
+                "confidence": segment.confidence,
+                "overlap": segment.overlap,
+                "embedding": list(segment.embedding) if segment.embedding is not None else None,
+            }
+            for segment in segment_rows
+        ],
+        "words": [
+            {
+                "segment_ordinal": segment_by_id[word.segment_id].ordinal,
+                "provider_speaker_id": (
+                    speaker_by_id[word.speaker_id].provider_speaker_id
+                    if word.speaker_id in speaker_by_id
+                    else "unknown"
+                ),
+                "provider_word_id": word.provider_word_id,
+                "ordinal": word.ordinal,
+                "start_ms": word.start_ms,
+                "end_ms": word.end_ms,
+                "text": word.text,
+                "confidence": word.confidence,
+            }
+            for word in db.scalars(
+                select(Word)
+                .where(Word.meeting_id == meeting.id)
+                .order_by(Word.ordinal)
+            ).all()
+            if word.segment_id in segment_by_id
+        ],
+    }
+
+
+def replace_intelligence(
+    db: Session, meeting: Meeting, intelligence: dict[str, Any]
+) -> None:
+    db.execute(delete(MemoryRecord).where(MemoryRecord.meeting_id == meeting.id))
+    db.execute(delete(Artifact).where(Artifact.meeting_id == meeting.id))
+    db.flush()
+    segment_by_ordinal = {
+        segment.ordinal: segment
+        for segment in db.scalars(
+            select(Segment).where(Segment.meeting_id == meeting.id)
+        ).all()
+    }
+
+    def materialize(value: Any) -> Any:
+        if isinstance(value, dict):
+            result = {key: materialize(child) for key, child in value.items()}
+            ordinals = result.pop("evidence_ordinals", None)
+            if isinstance(ordinals, list):
+                result["evidence"] = [
+                    {
+                        "segment_id": str(segment_by_ordinal[ordinal].id),
+                        "ordinal": ordinal,
+                        "start_ms": segment_by_ordinal[ordinal].start_ms,
+                        "end_ms": segment_by_ordinal[ordinal].end_ms,
+                    }
+                    for ordinal in ordinals
+                    if ordinal in segment_by_ordinal
+                ]
+            return result
+        if isinstance(value, list):
+            return [materialize(child) for child in value]
+        return value
+
+    for item in intelligence["artifacts"]:
+        db.add(
+            Artifact(
+                tenant_id=meeting.tenant_id,
+                meeting_id=meeting.id,
+                kind=item["kind"],
+                version=1,
+                source=item["source"],
+                data=materialize(item["data"]),
+            )
+        )
+
+    inserted: list[MemoryRecord] = []
+    for item in intelligence["memories"]:
+        evidence_ids = [
+            str(segment_by_ordinal[ordinal].id)
+            for ordinal in item["evidence_ordinals"]
+            if ordinal in segment_by_ordinal
+        ]
+        memory = MemoryRecord(
+            tenant_id=meeting.tenant_id,
+            meeting_id=meeting.id,
+            project_id=meeting.project_id,
+            kind=item["kind"],
+            subject=item["subject"],
+            content=item["content"],
+            status=item["status"],
+            evidence_segment_ids=evidence_ids,
+            extractor=item["extractor"],
+            embedding=item.get("embedding"),
+        )
+        db.add(memory)
+        db.flush()
+        inserted.append(memory)
+    _link_cross_meeting_memories(db, meeting, inserted)
+    meeting.status = "INTELLIGENCE_READY"
+    meeting.error = None
+    db.commit()
 
 
 def replace_normalized(db: Session, meeting: Meeting, normalized: dict[str, Any]) -> None:
