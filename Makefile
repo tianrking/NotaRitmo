@@ -1,10 +1,10 @@
-.PHONY: up down logs test lint smoke graph ps
+.PHONY: up dev down logs test lint smoke ps
 
 up:
 	docker compose up -d --build
 
-graph:
-	docker compose --profile graph up -d --build
+dev:
+	docker compose -f compose.yaml -f compose.dev.yaml up -d
 
 down:
 	docker compose down
@@ -19,8 +19,7 @@ test:
 	docker compose run --rm api pytest
 
 lint:
-	docker compose run --rm api ruff check app tests
+	docker compose run --rm api ruff check app tests scripts
 
 smoke:
 	python3 scripts/smoke.py
-
