@@ -15,8 +15,8 @@ with workflow.unsafe.imports_passed_through():
         memory_timeline,
         replace_normalized,
     )
-    from app.services.graph_memory import ingest_episode
     from app.services.embeddings import embedding_service
+    from app.services.graph_memory import ingest_episode
     from app.services.normalizer import normalize_tingwu
     from app.services.storage import provider_audio_url
     from app.services.tingwu import TingwuClient

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any
 
 from neo4j import AsyncGraphDatabase

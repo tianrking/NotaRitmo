@@ -226,7 +226,9 @@ async def run_agent(request: AgentQuery) -> dict[str, Any]:
             for memory in state["memory_evidence"]
             for evidence in memory.get("evidence", [])
         }
-        grounded = not state["answer"] or bool(segment_ids or referenced or state["analysis"]["meetings"])
+        grounded = not state["answer"] or bool(
+            segment_ids or referenced or state["analysis"]["meetings"]
+        )
         return {
             "verification": {
                 "grounded": grounded,

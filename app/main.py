@@ -6,7 +6,16 @@ from contextlib import asynccontextmanager
 from typing import Annotated, Any
 from uuid import UUID
 
-from fastapi import Depends, FastAPI, File, Form, HTTPException, Response, UploadFile, status
+from fastapi import (
+    Depends,
+    FastAPI,
+    File,
+    Form,
+    HTTPException,
+    Response,
+    UploadFile,
+    status,
+)
 from fastapi.responses import StreamingResponse
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -37,8 +46,8 @@ from app.repository import (
     words,
 )
 from app.schemas import (
-    AnalysisRequest,
     AgentQuery,
+    AnalysisRequest,
     ConversationAsk,
     ConversationCreate,
     ImportedMeetingCreate,

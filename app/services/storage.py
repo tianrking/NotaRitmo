@@ -1,9 +1,9 @@
 import hashlib
 import hmac
 import time
+from collections.abc import Iterator
 from datetime import timedelta
 from io import BytesIO
-from typing import Iterator
 from urllib.parse import urlencode
 from uuid import UUID
 
@@ -86,8 +86,7 @@ def stream_object(object_name: str) -> tuple[Iterator[bytes], str | None, int | 
     def iterator() -> Iterator[bytes]:
         response = client.get_object(settings.minio_bucket, object_name)
         try:
-            for chunk in response.stream(1024 * 1024):
-                yield chunk
+            yield from response.stream(1024 * 1024)
         finally:
             response.close()
             response.release_conn()
