@@ -14,6 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 REQUIRED_ARTIFACTS = {
     "summary",
     "detailed_summary",
+    "facts",
     "chapters",
     "action_items",
     "decisions",
@@ -74,6 +75,27 @@ def main() -> None:
         assert all(memory["evidence_segment_ids"] for memory in report["memories"]), report
         graph = request("GET", f"/v1/meetings/{created['id']}/graph")
         assert graph["nodes"] and graph["edges"], graph
+        pipeline = request(
+            "GET", f"/v1/meetings/{created['id']}/pipeline-runs"
+        )
+        assert pipeline["runs"][0]["status"] == "COMPLETED", pipeline
+        stage_names = {
+            stage["stage"] for stage in pipeline["runs"][0]["stages"]
+        }
+        assert {
+            "audio_preflight",
+            "transcription",
+            "canonical_normalization",
+            "unified_extraction",
+            "voiceprint_matching",
+            "graph_projection",
+            "hera_outbox",
+        } <= stage_names, stage_names
+        extraction = request(
+            "GET", f"/v1/meetings/{created['id']}/extractions"
+        )
+        assert extraction["run_count"] == 1, extraction
+        assert extraction["runs"][0]["status"] == "COMPLETED", extraction
         print(
             "meeting",
             index,
@@ -187,6 +209,17 @@ def main() -> None:
     graph_query = urllib.parse.urlencode({"query": "灰度分包", "project_id": "k6"})
     graph_results = request("GET", f"/v1/graph/search?{graph_query}")
     assert graph_results["results"], graph_results
+
+    outbox = request("GET", "/v1/hera/outbox?limit=500")
+    outbox_meeting_ids = {
+        item["payload"]["meeting"]["id"] for item in outbox["events"]
+    }
+    assert set(meeting_ids) <= outbox_meeting_ids, outbox_meeting_ids
+    assert all(
+        item["payload"]["ownership"]["todo_materialization"] == "hera"
+        for item in outbox["events"]
+        if item["payload"]["meeting"]["id"] in meeting_ids
+    )
 
     ready = request("GET", "/ready")
     assert ready["counts"]["words"] >= 24, ready

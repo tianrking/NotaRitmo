@@ -22,12 +22,12 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 from temporalio.client import Client
 
-from app.config import settings
 from app.auth import (
     current_tenant_id,
     current_user_id,
     hera_request_context,
 )
+from app.config import settings
 from app.db import SessionLocal, get_db
 from app.repository import (
     append_conversation_exchange,
@@ -40,6 +40,7 @@ from app.repository import (
     get_conversation,
     get_meeting,
     get_meeting_by_task_id,
+    get_meeting_for_provider,
     get_upload_session,
     list_conversations,
     list_meetings,
@@ -77,8 +78,8 @@ from app.services.graph_memory import graph_for_meeting, graph_health, graph_sea
 from app.services.hera import acknowledge_event, pending_events
 from app.services.storage import (
     ensure_bucket,
-    parse_minio_uri,
     object_stat,
+    parse_minio_uri,
     presigned_get,
     presigned_put,
     put_bytes,
@@ -336,6 +337,10 @@ async def reprocess(
     meeting = get_meeting(db, meeting_id)
     if not meeting:
         raise HTTPException(status_code=404, detail="meeting not found")
+    meeting.status = "QUEUED"
+    meeting.graph_status = "PENDING"
+    meeting.error = None
+    db.commit()
     workflow_id = await start_ingest(meeting_id)
     return {"meeting_id": str(meeting_id), "workflow_id": workflow_id}
 
@@ -784,7 +789,7 @@ def provider_audio_download(
 ) -> StreamingResponse:
     if not verify_provider_audio_token(meeting_id, expires, token):
         raise HTTPException(status_code=403, detail="invalid or expired download token")
-    meeting = get_meeting(db, meeting_id)
+    meeting = get_meeting_for_provider(db, meeting_id)
     selected_uri = (
         meeting.normalized_audio_uri if meeting else None
     ) or (meeting.audio_uri if meeting else None)

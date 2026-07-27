@@ -1,6 +1,7 @@
 name: meeting-agent
 
 x-app: &app
+  image: meeting-agent-app:latest
   build:
     context: .
     dockerfile: Dockerfile
@@ -23,8 +24,7 @@ services:
       - >-
         mkdir -p /models/fastembed /models/speaker &&
         if [ ! -s /models/speaker/3dspeaker_speech_campplus_sv_zh-cn_16k-common.onnx ]; then
-          wget -q -O /models/speaker/3dspeaker_speech_campplus_sv_zh-cn_16k-common.onnx
-          https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/3dspeaker_speech_campplus_sv_zh-cn_16k-common.onnx;
+          wget -q https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/3dspeaker_speech_campplus_sv_zh-cn_16k-common.onnx -O /models/speaker/3dspeaker_speech_campplus_sv_zh-cn_16k-common.onnx;
         fi &&
         chown -R 10001:10001 /models
     volumes:

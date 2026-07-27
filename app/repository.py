@@ -23,8 +23,8 @@ from app.models import (
     QueryAudit,
     Segment,
     Speaker,
-    Word,
     UploadSession,
+    Word,
 )
 from app.services.normalizer import tokenize
 
@@ -130,6 +130,12 @@ def get_meeting(db: Session, meeting_id: uuid.UUID) -> Meeting | None:
             Meeting.tenant_id == current_tenant_id(),
         )
     )
+
+
+def get_meeting_for_provider(db: Session, meeting_id: uuid.UUID) -> Meeting | None:
+    """Provider-only lookup used after the per-meeting HMAC download token is verified."""
+
+    return db.get(Meeting, meeting_id)
 
 
 def get_meeting_by_task_id(db: Session, task_id: str) -> Meeting | None:

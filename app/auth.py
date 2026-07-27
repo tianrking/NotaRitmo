@@ -26,20 +26,19 @@ class HeraPrincipal:
         return "*" in self.permissions or permission in self.permissions
 
 
-_principal: ContextVar[HeraPrincipal] = ContextVar(
-    "hera_principal",
-    default=HeraPrincipal(
+_principal: ContextVar[HeraPrincipal | None] = ContextVar(
+    "hera_principal", default=None
+)
+
+
+def current_principal() -> HeraPrincipal:
+    return _principal.get() or HeraPrincipal(
         tenant_id=settings.default_tenant_id,
         user_id=settings.default_user_id,
         permissions=frozenset({"*"}),
         request_id="local-development",
         authenticated=False,
-    ),
-)
-
-
-def current_principal() -> HeraPrincipal:
-    return _principal.get()
+    )
 
 
 def current_tenant_id() -> UUID:

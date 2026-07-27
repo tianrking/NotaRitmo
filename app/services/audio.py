@@ -11,7 +11,6 @@ import wave
 from array import array
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
 
 import httpx
 from sqlalchemy.orm import Session
@@ -121,7 +120,6 @@ def _audio_quality(path: Path) -> dict[str, Any]:
         frame_rms.append(math.sqrt(sum(value * value for value in frame) / len(frame)))
     sorted_rms = sorted(frame_rms)
     noise_floor = sorted_rms[max(0, round(len(sorted_rms) * 0.2) - 1)]
-    median_rms = statistics.median(frame_rms)
     threshold = max(noise_floor * 3.0, 10 ** (-45 / 20))
     voiced = [value for value in frame_rms if value >= threshold]
     speech_ratio = len(voiced) / max(len(frame_rms), 1)
