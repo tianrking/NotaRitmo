@@ -134,3 +134,17 @@ cache hit、Token 和成本。相同 Canonical + 模型 + Prompt + Schema 会直
 - Hera：身份、产品权限、卡片、Todo 和 App 工作流。
 
 详见 [架构](docs/ARCHITECTURE.md) 和 [部署](docs/DEPLOYMENT.md)。
+
+## 公开访谈检索验收
+
+运行六篇公开访谈的模拟 ASR 跨会议检索测试：
+
+```bash
+docker compose run --rm --no-deps \
+  -e MEETING_API_BASE=http://api:4200 \
+  api python scripts/interview_corpus_acceptance.py
+```
+
+该脚本验证 13 类产物、带证据记忆、单篇定位、跨篇召回、Agent 引用和无答案拒答。
+评测结果与当前缺陷见
+[`docs/INTERVIEW_CORPUS_EVALUATION.md`](docs/INTERVIEW_CORPUS_EVALUATION.md)。
