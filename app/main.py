@@ -12,28 +12,42 @@ from sqlalchemy.orm import Session
 from temporalio.client import Client
 
 from app.config import settings
-from app.db import get_db
+from app.db import SessionLocal, get_db
 from app.repository import (
+    append_conversation_exchange,
     artifacts,
+    conversation_messages,
     counts,
+    create_conversation,
     create_meeting,
+    get_conversation,
     get_meeting,
     get_meeting_by_task_id,
+    list_conversations,
     list_meetings,
+    meeting_memories,
+    meeting_report,
+    memory_timeline,
     overview,
+    scoped_analysis,
+    search_memories,
     search_segments,
     transcript,
     words,
 )
 from app.schemas import (
+    AnalysisRequest,
     AgentQuery,
+    ConversationAsk,
+    ConversationCreate,
     ImportedMeetingCreate,
     MeetingCreate,
     MeetingResponse,
+    MemorySearchRequest,
     SearchRequest,
     TingwuCallback,
 )
-from app.services.agent import run_agent
+from app.services.agent import run_agent, scope_meeting_ids
 from app.services.embeddings import embedding_service
 from app.services.storage import ensure_bucket, presigned_get, put_bytes
 from app.workflows.ingest import MeetingIngestWorkflow
@@ -270,6 +284,27 @@ def meeting_audio_url(
     return {"meeting_id": str(meeting_id), "url": meeting.audio_uri}
 
 
+@app.get("/v1/meetings/{meeting_id}/report")
+def complete_meeting_report(
+    meeting_id: UUID,
+    db: Annotated[Session, Depends(get_db)],
+) -> dict[str, Any]:
+    report = meeting_report(db, meeting_id)
+    if not report:
+        raise HTTPException(status_code=404, detail="meeting not found")
+    return report
+
+
+@app.get("/v1/meetings/{meeting_id}/memories")
+def memories_for_meeting(
+    meeting_id: UUID,
+    db: Annotated[Session, Depends(get_db)],
+) -> dict[str, Any]:
+    if not get_meeting(db, meeting_id):
+        raise HTTPException(status_code=404, detail="meeting not found")
+    return {"meeting_id": str(meeting_id), "memories": meeting_memories(db, meeting_id)}
+
+
 @app.post("/v1/search")
 async def search(
     payload: SearchRequest,
@@ -294,6 +329,123 @@ async def search(
 @app.post("/v1/agent/query")
 async def agent_query(payload: AgentQuery) -> dict[str, Any]:
     return await run_agent(payload)
+
+
+@app.post("/v1/analysis")
+def analyze_meetings(
+    payload: AnalysisRequest,
+    db: Annotated[Session, Depends(get_db)],
+) -> dict[str, Any]:
+    scope = payload.scope.model_dump(mode="json")
+    return scoped_analysis(
+        db,
+        meeting_ids=scope_meeting_ids(scope),
+        project_id=scope.get("project_id"),
+        time_from=payload.scope.time_from,
+        time_to=payload.scope.time_to,
+    )
+
+
+@app.post("/v1/memory/search")
+async def memory_search(
+    payload: MemorySearchRequest,
+    db: Annotated[Session, Depends(get_db)],
+) -> dict[str, Any]:
+    scope = payload.scope.model_dump(mode="json")
+    vector = await asyncio.to_thread(embedding_service().query, payload.query)
+    values = search_memories(
+        db,
+        query=payload.query,
+        meeting_ids=scope_meeting_ids(scope),
+        project_id=scope.get("project_id"),
+        time_from=payload.scope.time_from,
+        time_to=payload.scope.time_to,
+        kinds=payload.kinds,
+        limit=payload.limit,
+        query_embedding=vector,
+    )
+    return {"query": payload.query, "count": len(values), "memories": values}
+
+
+@app.get("/v1/memory/timeline")
+def cross_meeting_memory_timeline(
+    db: Annotated[Session, Depends(get_db)],
+    project_id: str | None = None,
+    meeting_ids: list[UUID] | None = None,
+) -> dict[str, Any]:
+    return memory_timeline(db, meeting_ids=meeting_ids, project_id=project_id)
+
+
+@app.post("/v1/conversations", status_code=status.HTTP_201_CREATED)
+def new_conversation(
+    payload: ConversationCreate,
+    db: Annotated[Session, Depends(get_db)],
+) -> dict[str, Any]:
+    value = create_conversation(
+        db,
+        title=payload.title,
+        scope=payload.scope.model_dump(mode="json"),
+    )
+    return {
+        "id": str(value.id),
+        "title": value.title,
+        "scope": value.scope,
+        "created_at": value.created_at.isoformat(),
+    }
+
+
+@app.get("/v1/conversations")
+def conversations(db: Annotated[Session, Depends(get_db)]) -> list[dict[str, Any]]:
+    return list_conversations(db)
+
+
+@app.get("/v1/conversations/{conversation_id}")
+def conversation_detail(
+    conversation_id: UUID,
+    db: Annotated[Session, Depends(get_db)],
+) -> dict[str, Any]:
+    value = get_conversation(db, conversation_id)
+    if not value:
+        raise HTTPException(status_code=404, detail="conversation not found")
+    return {
+        "id": str(value.id),
+        "title": value.title,
+        "scope": value.scope,
+        "messages": conversation_messages(db, value.id),
+    }
+
+
+@app.post("/v1/conversations/{conversation_id}/messages")
+async def ask_in_conversation(
+    conversation_id: UUID,
+    payload: ConversationAsk,
+) -> dict[str, Any]:
+    with SessionLocal() as db:
+        conversation = get_conversation(db, conversation_id)
+        if not conversation:
+            raise HTTPException(status_code=404, detail="conversation not found")
+        scope = conversation.scope
+        history = conversation_messages(db, conversation.id)[-12:]
+    request = AgentQuery(
+        query=payload.content,
+        scope=scope,
+        limit=payload.limit,
+        history=[
+            {"role": item["role"], "content": item["content"]} for item in history
+        ],
+    )
+    result = await run_agent(request)
+    with SessionLocal() as db:
+        conversation = get_conversation(db, conversation_id)
+        if not conversation:
+            raise HTTPException(status_code=404, detail="conversation not found")
+        append_conversation_exchange(
+            db,
+            conversation,
+            question=payload.content,
+            response=result,
+        )
+    return {"conversation_id": str(conversation_id), **result}
 
 
 @app.get("/v1/analytics/overview")

@@ -57,6 +57,29 @@ class AgentQuery(BaseModel):
     query: str = Field(min_length=1, max_length=4000)
     scope: AgentScope = Field(default_factory=AgentScope)
     limit: int = Field(default=16, ge=1, le=50)
+    history: list[dict[str, str]] = Field(default_factory=list, max_length=20)
+
+
+class AnalysisRequest(BaseModel):
+    scope: AgentScope = Field(default_factory=AgentScope)
+    focus: str | None = Field(default=None, max_length=1000)
+
+
+class MemorySearchRequest(BaseModel):
+    query: str = Field(min_length=1, max_length=2000)
+    scope: AgentScope = Field(default_factory=AgentScope)
+    kinds: list[str] = Field(default_factory=list)
+    limit: int = Field(default=30, ge=1, le=100)
+
+
+class ConversationCreate(BaseModel):
+    title: str = Field(default="新会议对话", min_length=1, max_length=500)
+    scope: AgentScope = Field(default_factory=AgentScope)
+
+
+class ConversationAsk(BaseModel):
+    content: str = Field(min_length=1, max_length=4000)
+    limit: int = Field(default=16, ge=1, le=50)
 
 
 class TingwuCallback(BaseModel):
@@ -66,4 +89,3 @@ class TingwuCallback(BaseModel):
     Data: dict[str, Any]
     Message: str | None = None
     RequestId: str | None = None
-

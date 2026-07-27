@@ -11,8 +11,11 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.models import (
     Artifact,
+    Conversation,
+    ConversationMessage,
     Meeting,
     MeetingAccess,
+    MemoryLink,
     MemoryRecord,
     QueryAudit,
     Segment,
@@ -171,14 +174,14 @@ def replace_normalized(db: Session, meeting: Meeting, normalized: dict[str, Any]
             )
         )
 
+    inserted_memories: list[MemoryRecord] = []
     for item in normalized["memories"]:
         evidence_ids = [
             str(segment_by_ordinal[ordinal].id)
             for ordinal in item["evidence_ordinals"]
             if ordinal in segment_by_ordinal
         ]
-        db.add(
-            MemoryRecord(
+        memory = MemoryRecord(
                 tenant_id=meeting.tenant_id,
                 meeting_id=meeting.id,
                 project_id=meeting.project_id,
@@ -190,12 +193,83 @@ def replace_normalized(db: Session, meeting: Meeting, normalized: dict[str, Any]
                 extractor=item["extractor"],
                 embedding=item.get("embedding"),
             )
-        )
+        db.add(memory)
+        db.flush()
+        inserted_memories.append(memory)
+
+    _link_cross_meeting_memories(db, meeting, inserted_memories)
 
     meeting.duration_ms = normalized.get("duration_ms")
     meeting.status = "READY"
     meeting.error = None
     db.commit()
+
+
+def _token_set(text: str) -> set[str]:
+    return set(tokenize(text))
+
+
+def _link_cross_meeting_memories(
+    db: Session, meeting: Meeting, inserted: list[MemoryRecord]
+) -> None:
+    if not inserted:
+        return
+    previous = list(
+        db.scalars(
+            select(MemoryRecord)
+            .join(Meeting, MemoryRecord.meeting_id == Meeting.id)
+            .where(
+                MemoryRecord.tenant_id == meeting.tenant_id,
+                MemoryRecord.meeting_id != meeting.id,
+                Meeting.status == "READY",
+                MemoryRecord.project_id == meeting.project_id
+                if meeting.project_id
+                else MemoryRecord.project_id.is_(None),
+            )
+            .order_by(MemoryRecord.created_at.desc())
+            .limit(1000)
+        ).all()
+    )
+    for current in inserted:
+        current_terms = _token_set(current.content)
+        best: tuple[float, MemoryRecord] | None = None
+        for older in previous:
+            if older.kind != current.kind:
+                continue
+            older_terms = _token_set(older.content)
+            union = current_terms | older_terms
+            similarity = len(current_terms & older_terms) / len(union) if union else 0.0
+            if current.subject and current.subject == older.subject:
+                similarity = max(similarity, 0.65)
+            if best is None or similarity > best[0]:
+                best = (similarity, older)
+        if not best or best[0] < 0.2:
+            continue
+        score, older = best
+        superseding = current.kind == "decision" and any(
+            marker in current.content for marker in ("改为", "调整为", "不再", "替代", "取代")
+        )
+        relation = (
+            "supersedes"
+            if superseding
+            else "follows_up"
+            if current.kind == "action_item"
+            else "related_to"
+        )
+        if relation == "supersedes":
+            current.supersedes_id = older.id
+            older.status = "superseded"
+            older.valid_to = func.now()
+        db.add(
+            MemoryLink(
+                tenant_id=meeting.tenant_id,
+                source_memory_id=current.id,
+                target_memory_id=older.id,
+                relation=relation,
+                confidence=round(score, 4),
+                rationale=f"同项目同类型记忆，词项相似度 {score:.2f}",
+            )
+        )
 
 
 def transcript(db: Session, meeting_id: uuid.UUID) -> list[dict[str, Any]]:
@@ -295,6 +369,399 @@ def artifacts(db: Session, meeting_id: uuid.UUID) -> dict[str, Any]:
         }
         for row in rows
     }
+
+
+def meeting_memories(db: Session, meeting_id: uuid.UUID) -> list[dict[str, Any]]:
+    rows = db.execute(
+        select(MemoryRecord, Meeting)
+        .join(Meeting, MemoryRecord.meeting_id == Meeting.id)
+        .where(
+            MemoryRecord.tenant_id == settings.default_tenant_id,
+            MemoryRecord.meeting_id == meeting_id,
+        )
+        .order_by(MemoryRecord.created_at, MemoryRecord.kind)
+    ).all()
+    return [_memory_dict(memory, meeting) for memory, meeting in rows]
+
+
+def _memory_dict(memory: MemoryRecord, meeting: Meeting) -> dict[str, Any]:
+    return {
+        "memory_id": str(memory.id),
+        "meeting_id": str(memory.meeting_id),
+        "meeting_title": meeting.title,
+        "project_id": memory.project_id,
+        "kind": memory.kind,
+        "subject": memory.subject,
+        "content": memory.content,
+        "status": memory.status,
+        "valid_from": memory.valid_from.isoformat() if memory.valid_from else None,
+        "valid_to": memory.valid_to.isoformat() if memory.valid_to else None,
+        "supersedes_id": str(memory.supersedes_id) if memory.supersedes_id else None,
+        "evidence_segment_ids": memory.evidence_segment_ids,
+        "extractor": memory.extractor,
+        "meeting_created_at": meeting.created_at.isoformat(),
+    }
+
+
+def _apply_scope(
+    statement: Any,
+    *,
+    meeting_ids: list[uuid.UUID] | None = None,
+    project_id: str | None = None,
+    time_from: datetime | None = None,
+    time_to: datetime | None = None,
+) -> Any:
+    if meeting_ids:
+        statement = statement.where(Meeting.id.in_(meeting_ids))
+    if project_id:
+        statement = statement.where(Meeting.project_id == project_id)
+    if time_from:
+        statement = statement.where(Meeting.created_at >= time_from)
+    if time_to:
+        statement = statement.where(Meeting.created_at <= time_to)
+    return statement
+
+
+def search_memories(
+    db: Session,
+    *,
+    query: str,
+    meeting_ids: list[uuid.UUID] | None = None,
+    project_id: str | None = None,
+    time_from: datetime | None = None,
+    time_to: datetime | None = None,
+    kinds: list[str] | None = None,
+    limit: int = 30,
+    query_embedding: list[float] | None = None,
+) -> list[dict[str, Any]]:
+    terms = tokenize(query) or [query.strip()]
+    base = (
+        select(MemoryRecord, Meeting)
+        .join(Meeting, MemoryRecord.meeting_id == Meeting.id)
+        .where(
+            MemoryRecord.tenant_id == settings.default_tenant_id,
+            Meeting.tenant_id == settings.default_tenant_id,
+            Meeting.status == "READY",
+        )
+    )
+    base = _apply_scope(
+        base,
+        meeting_ids=meeting_ids,
+        project_id=project_id,
+        time_from=time_from,
+        time_to=time_to,
+    )
+    if kinds:
+        base = base.where(MemoryRecord.kind.in_(kinds))
+    conditions = [
+        or_(
+            MemoryRecord.content.ilike(f"%{term}%"),
+            MemoryRecord.subject.ilike(f"%{term}%"),
+        )
+        for term in terms[:12]
+        if term
+    ]
+    lexical_rows = db.execute(
+        base.where(or_(*conditions)).limit(max(limit * 4, 50))
+        if conditions
+        else base.limit(max(limit * 4, 50))
+    ).all()
+    semantic_rows = []
+    if query_embedding:
+        semantic_rows = db.execute(
+            base.where(MemoryRecord.embedding.is_not(None))
+            .order_by(MemoryRecord.embedding.cosine_distance(query_embedding))
+            .limit(max(limit * 4, 50))
+        ).all()
+    candidates: dict[str, tuple[MemoryRecord, Meeting]] = {}
+    lexical_rank: dict[str, int] = {}
+    semantic_rank: dict[str, int] = {}
+    for rank, row in enumerate(lexical_rows, 1):
+        key = str(row[0].id)
+        candidates[key] = row
+        lexical_rank[key] = rank
+    for rank, row in enumerate(semantic_rows, 1):
+        key = str(row[0].id)
+        candidates[key] = row
+        semantic_rank[key] = rank
+    values = []
+    for key, (memory, meeting) in candidates.items():
+        value = _memory_dict(memory, meeting)
+        rrf = (1 / (60 + lexical_rank[key]) if key in lexical_rank else 0) + (
+            1 / (60 + semantic_rank[key]) if key in semantic_rank else 0
+        )
+        value["score"] = round(rrf, 6)
+        value["retrieval"] = (
+            "hybrid"
+            if key in lexical_rank and key in semantic_rank
+            else "semantic"
+            if key in semantic_rank
+            else "lexical"
+        )
+        values.append(value)
+    evidence_ids = {
+        uuid.UUID(segment_id)
+        for value in values
+        for segment_id in value["evidence_segment_ids"]
+        if segment_id
+    }
+    evidence_by_id: dict[str, dict[str, Any]] = {}
+    if evidence_ids:
+        for segment, speaker, meeting in db.execute(
+            select(Segment, Speaker, Meeting)
+            .join(Meeting, Segment.meeting_id == Meeting.id)
+            .outerjoin(Speaker, Segment.speaker_id == Speaker.id)
+            .where(Segment.id.in_(evidence_ids))
+        ).all():
+            evidence_by_id[str(segment.id)] = {
+                "segment_id": str(segment.id),
+                "meeting_id": str(meeting.id),
+                "meeting_title": meeting.title,
+                "speaker_id": str(speaker.id) if speaker else None,
+                "speaker_name": speaker.display_name if speaker else "Unknown",
+                "start_ms": segment.start_ms,
+                "end_ms": segment.end_ms,
+                "text": segment.text,
+            }
+    for value in values:
+        value["evidence"] = [
+            evidence_by_id[segment_id]
+            for segment_id in value["evidence_segment_ids"]
+            if segment_id in evidence_by_id
+        ]
+    values.sort(key=lambda item: (-item["score"], item["meeting_created_at"]))
+    return values[:limit]
+
+
+def memory_timeline(
+    db: Session,
+    *,
+    meeting_ids: list[uuid.UUID] | None = None,
+    project_id: str | None = None,
+) -> dict[str, Any]:
+    statement = (
+        select(MemoryRecord, Meeting)
+        .join(Meeting, MemoryRecord.meeting_id == Meeting.id)
+        .where(
+            MemoryRecord.tenant_id == settings.default_tenant_id,
+            Meeting.status == "READY",
+        )
+    )
+    statement = _apply_scope(statement, meeting_ids=meeting_ids, project_id=project_id)
+    rows = db.execute(statement.order_by(Meeting.created_at, MemoryRecord.created_at)).all()
+    ids = [memory.id for memory, _ in rows]
+    links = []
+    if ids:
+        links = [
+            {
+                "source_memory_id": str(link.source_memory_id),
+                "target_memory_id": str(link.target_memory_id),
+                "relation": link.relation,
+                "confidence": link.confidence,
+                "rationale": link.rationale,
+            }
+            for link in db.scalars(
+                select(MemoryLink).where(
+                    or_(
+                        MemoryLink.source_memory_id.in_(ids),
+                        MemoryLink.target_memory_id.in_(ids),
+                    )
+                )
+            ).all()
+        ]
+    return {
+        "events": [_memory_dict(memory, meeting) for memory, meeting in rows],
+        "links": links,
+    }
+
+
+def meeting_report(db: Session, meeting_id: uuid.UUID) -> dict[str, Any] | None:
+    meeting = get_meeting(db, meeting_id)
+    if not meeting:
+        return None
+    return {
+        "meeting": {
+            "id": str(meeting.id),
+            "title": meeting.title,
+            "project_id": meeting.project_id,
+            "status": meeting.status,
+            "source_provider": meeting.source_provider,
+            "duration_ms": meeting.duration_ms,
+            "audio_uri": meeting.audio_uri,
+            "created_at": meeting.created_at.isoformat(),
+        },
+        "transcript": transcript(db, meeting_id),
+        "artifacts": artifacts(db, meeting_id),
+        "memories": meeting_memories(db, meeting_id),
+    }
+
+
+def scoped_analysis(
+    db: Session,
+    *,
+    meeting_ids: list[uuid.UUID] | None = None,
+    project_id: str | None = None,
+    time_from: datetime | None = None,
+    time_to: datetime | None = None,
+) -> dict[str, Any]:
+    statement = select(Meeting).where(
+        Meeting.tenant_id == settings.default_tenant_id,
+        Meeting.status == "READY",
+    )
+    statement = _apply_scope(
+        statement,
+        meeting_ids=meeting_ids,
+        project_id=project_id,
+        time_from=time_from,
+        time_to=time_to,
+    )
+    meetings = list(db.scalars(statement.order_by(Meeting.created_at)).all())
+    grouped: dict[str, list[dict[str, Any]]] = {
+        "decisions": [],
+        "action_items": [],
+        "risks": [],
+        "open_questions": [],
+        "topics": [],
+    }
+    summaries = []
+    kind_groups = {
+        "decision": "decisions",
+        "action_item": "action_items",
+        "risk": "risks",
+        "open_question": "open_questions",
+        "topic": "topics",
+    }
+    for meeting in meetings:
+        values = artifacts(db, meeting.id)
+        summary = ((values.get("summary") or {}).get("data") or {}).get("text")
+        summaries.append(
+            {
+                "meeting_id": str(meeting.id),
+                "title": meeting.title,
+                "project_id": meeting.project_id,
+                "created_at": meeting.created_at.isoformat(),
+                "summary": summary,
+            }
+        )
+        for memory in meeting_memories(db, meeting.id):
+            destination = kind_groups.get(memory["kind"])
+            if destination:
+                grouped[destination].append(memory)
+    keyword_counter: Counter[str] = Counter(
+        item["subject"] or item["content"] for item in grouped["topics"]
+    )
+    return {
+        "scope": {
+            "meeting_ids": [str(item.id) for item in meetings],
+            "project_id": project_id,
+        },
+        "meeting_count": len(meetings),
+        "meetings": summaries,
+        "overall_summary": "\n".join(
+            f"{index + 1}. {item['title']}：{item['summary'] or '暂无摘要'}"
+            for index, item in enumerate(summaries)
+        ),
+        **grouped,
+        "top_topics": [
+            {"text": text, "meeting_mentions": count}
+            for text, count in keyword_counter.most_common(30)
+        ],
+        "timeline": memory_timeline(
+            db, meeting_ids=[item.id for item in meetings], project_id=project_id
+        ),
+    }
+
+
+def create_conversation(
+    db: Session, *, title: str, scope: dict[str, Any]
+) -> Conversation:
+    conversation = Conversation(
+        tenant_id=settings.default_tenant_id,
+        user_id=settings.default_user_id,
+        title=title,
+        scope=scope,
+    )
+    db.add(conversation)
+    db.commit()
+    db.refresh(conversation)
+    return conversation
+
+
+def list_conversations(db: Session) -> list[dict[str, Any]]:
+    conversations = db.scalars(
+        select(Conversation)
+        .where(
+            Conversation.tenant_id == settings.default_tenant_id,
+            Conversation.user_id == settings.default_user_id,
+        )
+        .order_by(Conversation.updated_at.desc())
+    ).all()
+    return [
+        {
+            "id": str(item.id),
+            "title": item.title,
+            "scope": item.scope,
+            "created_at": item.created_at.isoformat(),
+            "updated_at": item.updated_at.isoformat(),
+        }
+        for item in conversations
+    ]
+
+
+def get_conversation(db: Session, conversation_id: uuid.UUID) -> Conversation | None:
+    return db.scalar(
+        select(Conversation).where(
+            Conversation.id == conversation_id,
+            Conversation.tenant_id == settings.default_tenant_id,
+            Conversation.user_id == settings.default_user_id,
+        )
+    )
+
+
+def conversation_messages(
+    db: Session, conversation_id: uuid.UUID
+) -> list[dict[str, Any]]:
+    return [
+        {
+            "id": str(item.id),
+            "role": item.role,
+            "content": item.content,
+            "payload": item.payload,
+            "created_at": item.created_at.isoformat(),
+        }
+        for item in db.scalars(
+            select(ConversationMessage)
+            .where(ConversationMessage.conversation_id == conversation_id)
+            .order_by(ConversationMessage.created_at)
+        ).all()
+    ]
+
+
+def append_conversation_exchange(
+    db: Session,
+    conversation: Conversation,
+    *,
+    question: str,
+    response: dict[str, Any],
+) -> None:
+    db.add(
+        ConversationMessage(
+            conversation_id=conversation.id,
+            role="user",
+            content=question,
+            payload={},
+        )
+    )
+    db.add(
+        ConversationMessage(
+            conversation_id=conversation.id,
+            role="assistant",
+            content=response["answer"],
+            payload=response,
+        )
+    )
+    conversation.updated_at = func.now()
+    db.commit()
 
 
 def search_segments(

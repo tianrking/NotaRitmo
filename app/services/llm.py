@@ -1,3 +1,4 @@
+import json
 from typing import Any
 
 import httpx
@@ -52,6 +53,42 @@ class LLMClient:
             data = response.json()
             return data["choices"][0]["message"]["content"]
 
+    async def answer_with_context(
+        self, query: str, context: dict[str, Any]
+    ) -> str | None:
+        if not self.enabled:
+            return None
+        serialized = json.dumps(context, ensure_ascii=False, default=str)
+        if len(serialized) > 100_000:
+            serialized = serialized[:100_000]
+        payload = {
+            "model": settings.llm_model,
+            "temperature": 0.1,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": (
+                        "你是 NotaRitmo 会议分析助手。只能使用输入中的会议原文、"
+                        "结构化记忆和摘要回答。所有判断必须能由证据支持；"
+                        "信息不足时明确说明，禁止编造负责人、日期、决定和会议。"
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": f"问题：{query}\n\n授权会议上下文：\n{serialized}",
+                },
+            ],
+        }
+        async with httpx.AsyncClient(timeout=120) as client:
+            response = await client.post(
+                f"{self.base_url}/chat/completions",
+                headers=self.headers,
+                json=payload,
+            )
+            response.raise_for_status()
+            data = response.json()
+            return data["choices"][0]["message"]["content"]
+
     async def embed(self, texts: list[str]) -> list[list[float]] | None:
         if not settings.embedding_model or not texts:
             return None
@@ -65,4 +102,3 @@ class LLMClient:
             response.raise_for_status()
             ordered = sorted(response.json()["data"], key=lambda item: item["index"])
             return [item["embedding"] for item in ordered]
-
