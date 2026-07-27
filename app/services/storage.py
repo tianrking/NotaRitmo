@@ -1,5 +1,11 @@
+import hashlib
+import hmac
+import time
 from datetime import timedelta
 from io import BytesIO
+from typing import Iterator
+from urllib.parse import urlencode
+from uuid import UUID
 
 from minio import Minio
 
@@ -42,3 +48,48 @@ def presigned_get(object_name: str, hours: int = 4) -> str:
         expires=timedelta(hours=hours),
     )
 
+
+def parse_minio_uri(uri: str) -> str:
+    prefix = f"minio://{settings.minio_bucket}/"
+    if not uri.startswith(prefix):
+        raise ValueError("not a NotaRitmo MinIO URI")
+    return uri[len(prefix) :]
+
+
+def provider_audio_url(meeting_id: UUID) -> str:
+    expires = int(time.time()) + settings.provider_audio_url_ttl_seconds
+    message = f"{meeting_id}:{expires}".encode()
+    token = hmac.new(
+        settings.provider_audio_secret.encode(), message, hashlib.sha256
+    ).hexdigest()
+    query = urlencode({"expires": expires, "token": token})
+    return (
+        f"{settings.public_api_base_url.rstrip('/')}/v1/providers/audio/"
+        f"{meeting_id}?{query}"
+    )
+
+
+def verify_provider_audio_token(meeting_id: UUID, expires: int, token: str) -> bool:
+    if expires < int(time.time()):
+        return False
+    message = f"{meeting_id}:{expires}".encode()
+    expected = hmac.new(
+        settings.provider_audio_secret.encode(), message, hashlib.sha256
+    ).hexdigest()
+    return hmac.compare_digest(expected, token)
+
+
+def stream_object(object_name: str) -> tuple[Iterator[bytes], str | None, int | None]:
+    client = get_minio()
+    stat = client.stat_object(settings.minio_bucket, object_name)
+
+    def iterator() -> Iterator[bytes]:
+        response = client.get_object(settings.minio_bucket, object_name)
+        try:
+            for chunk in response.stream(1024 * 1024):
+                yield chunk
+        finally:
+            response.close()
+            response.release_conn()
+
+    return iterator(), stat.content_type, stat.size

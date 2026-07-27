@@ -25,6 +25,8 @@ class Settings(BaseSettings):
     default_tenant_id: UUID = UUID("00000000-0000-0000-0000-000000000001")
     default_user_id: UUID = UUID("00000000-0000-0000-0000-000000000001")
     public_api_base_url: str = "http://localhost:4200"
+    provider_audio_secret: str = "change-provider-audio-secret"
+    provider_audio_url_ttl_seconds: int = 86400
 
     tingwu_enabled: bool = False
     tingwu_app_key: str = ""

@@ -7,6 +7,7 @@ from typing import Annotated, Any
 from uuid import UUID
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Response, UploadFile, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 from temporalio.client import Client
@@ -50,7 +51,14 @@ from app.schemas import (
 from app.services.agent import run_agent, scope_meeting_ids
 from app.services.embeddings import embedding_service
 from app.services.graph_memory import graph_for_meeting, graph_health, graph_search
-from app.services.storage import ensure_bucket, presigned_get, put_bytes
+from app.services.storage import (
+    ensure_bucket,
+    parse_minio_uri,
+    presigned_get,
+    put_bytes,
+    stream_object,
+    verify_provider_audio_token,
+)
 from app.workflows.ingest import MeetingIngestWorkflow
 
 
@@ -150,7 +158,7 @@ async def upload_audio(
         project_id=project_id,
         source_language=source_language,
     )
-    if public_audio_url:
+    if public_audio_url or settings.tingwu_enabled:
         try:
             response.headers["X-Workflow-Id"] = await start_ingest(meeting.id)
         except Exception as exc:
@@ -160,8 +168,8 @@ async def upload_audio(
     else:
         meeting.status = "UPLOADED"
         meeting.error = {
-            "stage": "awaiting_public_url",
-            "message": "听悟必须能从公网访问音频；请提供 public_audio_url 后提交。",
+            "stage": "awaiting_provider",
+            "message": "音频已保存；启用并配置听悟后可直接重新处理。",
             "stored_uri": internal_uri,
         }
         db.commit()
@@ -503,3 +511,24 @@ async def tingwu_callback(
         raise HTTPException(status_code=404, detail="unknown Tingwu TaskId")
     workflow_id = await start_ingest(meeting.id)
     return {"status": "accepted", "meeting_id": str(meeting.id), "workflow_id": workflow_id}
+
+
+@app.get("/v1/providers/audio/{meeting_id}", include_in_schema=False)
+def provider_audio_download(
+    meeting_id: UUID,
+    expires: int,
+    token: str,
+    db: Annotated[Session, Depends(get_db)],
+) -> StreamingResponse:
+    if not verify_provider_audio_token(meeting_id, expires, token):
+        raise HTTPException(status_code=403, detail="invalid or expired download token")
+    meeting = get_meeting(db, meeting_id)
+    if not meeting or not meeting.audio_uri or not meeting.audio_uri.startswith("minio://"):
+        raise HTTPException(status_code=404, detail="audio not found")
+    iterator, content_type, size = stream_object(parse_minio_uri(meeting.audio_uri))
+    headers = {"Content-Length": str(size)} if size is not None else {}
+    return StreamingResponse(
+        iterator,
+        media_type=content_type or "application/octet-stream",
+        headers=headers,
+    )

@@ -18,6 +18,7 @@ with workflow.unsafe.imports_passed_through():
     from app.services.graph_memory import ingest_episode
     from app.services.embeddings import embedding_service
     from app.services.normalizer import normalize_tingwu
+    from app.services.storage import provider_audio_url
     from app.services.tingwu import TingwuClient
 
 
@@ -39,9 +40,12 @@ async def process_meeting_activity(meeting_id: str) -> dict:
                 if meeting.source_task_id:
                     task_id = meeting.source_task_id
                 else:
+                    audio_url = meeting.audio_uri
+                    if audio_url and audio_url.startswith("minio://"):
+                        audio_url = provider_audio_url(meeting.id)
                     task_id = await asyncio.to_thread(
                         client.create_offline_task,
-                        audio_url=meeting.audio_uri,
+                        audio_url=audio_url,
                         task_key=str(meeting.id),
                         source_language=meeting.source_language,
                     )
