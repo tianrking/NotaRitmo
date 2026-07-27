@@ -292,15 +292,15 @@ class GraphMemory:
                   AND ($project_id IS NULL OR n.project_id = $project_id
                        OR EXISTS { MATCH (p:Project {id: $project_id})-[*1..2]-(n) })
                   AND (
-                    toLower(coalesce(n.title, '')) CONTAINS $query OR
-                    toLower(coalesce(n.text, '')) CONTAINS $query OR
-                    toLower(coalesce(n.name, '')) CONTAINS $query OR
-                    toLower(coalesce(n.subject, '')) CONTAINS $query
+                    toLower(coalesce(n.title, '')) CONTAINS $search_text OR
+                    toLower(coalesce(n.text, '')) CONTAINS $search_text OR
+                    toLower(coalesce(n.name, '')) CONTAINS $search_text OR
+                    toLower(coalesce(n.subject, '')) CONTAINS $search_text
                   )
                 RETURN labels(n) AS labels, properties(n) AS properties
                 LIMIT $limit
                 """,
-                query=lowered,
+                search_text=lowered,
                 project_id=project_id,
                 limit=limit,
             )
