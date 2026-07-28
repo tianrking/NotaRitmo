@@ -8,6 +8,87 @@
 
 > 系统应该记住什么、信息来自哪里、什么目前有效、后来发生了什么变化。
 
+## 实现语言与运行边界
+
+### 语言结论
+
+本模块的权威实现必须使用 Go。PostgreSQL 保存权威事实；Python 只允许作为实体归并、关系
+发现和图实验的候选 Provider：
+
+```text
+Go Memory Service
+├── Claim State Machine
+├── Bitemporal Validity
+├── Entity Registry
+├── Evidence Validation
+├── Supersede / Contradict Rules
+├── Tenant / Permission / Deletion
+├── PostgreSQL Transactions
+└── Projection Rebuild
+                 │
+                 ▼
+Optional Python Candidate Services
+├── Entity Resolution Candidate
+├── Contradiction Candidate
+├── Relation Candidate
+├── Graphiti Experiment
+└── Mem0 / Hindsight Experiment
+```
+
+Go 负责：
+
+- 把单会议 Artifact 和人工确认转换为候选 Claim 变更。
+- 管理实体注册表、规范名称、别名、租户边界和合并历史。
+- 校验每条 Claim 的 Artifact、Transcript、Segment、时间点和媒体证据。
+- 实现 `active`、`superseded`、`contradicted`、`retracted`、`pending_review` 等状态机。
+- 判定并写入 `supports`、`supersedes`、`contradicts` 和 `follows_up`。
+- 同时管理业务有效时间与系统记录时间，保留完整变更历史。
+- 使用 PostgreSQL 事务、唯一约束、乐观锁和 Outbox 发布一致变更。
+- 管理人工批准、拒绝、纠错、回滚、删除、审计和保留期。
+- 生成权威 `MemorySnapshot` 与 `ClaimTimeline`。
+- 从权威数据重建向量、全文和图投影。
+
+Python 候选 Provider 可以负责：
+
+- 实体相似度、别名、同义词和跨会议实体合并候选。
+- 新旧 Claim 相似、支持、冲突和替代关系候选。
+- Graphiti、Mem0、Hindsight 或其他 Memory 项目的对照实验。
+- 候选关系的解释、分数、模型版本和离线评测。
+
+Python 候选 Provider 必须返回类似：
+
+```json
+{
+  "candidate_type": "supersedes",
+  "source_claim_id": "claim_kotlin",
+  "target_claim_id": "claim_flutter",
+  "confidence": 0.91,
+  "evidence_ids": ["seg_018"],
+  "producer_version": "relation-model-v1"
+}
+```
+
+该响应只是候选。Go 必须再次验证租户、实体、证据、时间、规则和当前状态，才能形成
+`MemoryChangeSet`。
+
+Python、Graphiti、Neo4j、Mem0 和 Hindsight 禁止：
+
+- 成为当前有效事实的唯一权威源。
+- 未经 Go 服务直接改变 Claim 状态。
+- 通过图距离、Embedding 相似度或 LLM 判断覆盖 PostgreSQL 权威状态。
+- 绕过租户、权限、人工确认、审计和删除传播。
+- 直接回答用户自然语言问题。
+- 把聊天历史静默升级为会议事实。
+
+### 存储与部署
+
+- PostgreSQL 是 Entity、Claim、时态、审核、权限和版本的权威存储。
+- Neo4j 或其他图数据库只保存可重建关系投影和候选边。
+- pgvector 只保存可重建向量投影。
+- Go Memory Service 是唯一正式写入入口。
+- Python 候选服务按需部署，可以完全关闭而不影响确定性 Memory 状态机运行。
+- 图或向量投影失败时，权威 Memory 仍保持完整，并通过重建任务恢复。
+
 ## 输入
 
 - 单会议`MeetingArtifactBundle`。

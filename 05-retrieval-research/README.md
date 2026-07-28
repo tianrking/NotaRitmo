@@ -6,6 +6,94 @@
 
 Memory负责记住什么；这一块负责如何找到、排序、拒答、综合和引用。
 
+## 实现语言与运行边界
+
+### 语言结论
+
+本模块采用 Go 查询控制层加 Python 模型层：
+
+```text
+Go Retrieval Service
+├── Tenant Scope / ACL
+├── Query Classification
+├── Meeting / Time / Person Filters
+├── PostgreSQL FTS
+├── pgvector Query
+├── Hybrid Fusion
+├── Claim State Filter
+├── No-answer Gate
+├── Citation Validation
+└── QueryResult Authority
+                 │
+                 ▼
+Python Retrieval Model Service
+├── Embedding
+├── Cross-encoder Reranker
+├── Query Rewrite Candidate
+├── Local Answer Model
+└── Retrieval Evaluation
+```
+
+Go 负责：
+
+- 建立并强制执行租户、用户、项目、会议、人员和时间查询范围。
+- 解析显式过滤条件，区分单会议、多会议、历史变化和全库查询。
+- 查询会议元数据、Transcript、Artifact、当前 Claim 和 Claim Timeline。
+- 执行 PostgreSQL FTS、pgvector、元数据过滤和多级召回。
+- 实现 RRF、加权融合、Meeting 聚合、去重和候选预算。
+- 调用 Python Embedding/Reranker 或外部模型 Provider。
+- 过滤已过期、被替代、撤回、无权访问和证据失效的结果。
+- 校准 no-answer，决定返回答案、拒答还是降级为证据列表。
+- 调用外部答案 LLM，或把候选交给 Python 本地答案模型。
+- 对每个最终结论验证引用、原文、会议、时间点和可播放状态。
+- 发布权威 `SearchResult` 与 `QueryResult`，记录完整检索配置版本。
+
+Python 负责：
+
+- 查询、Segment、Artifact 和 Claim 的 Embedding 推理。
+- Cross-encoder Reranker 和候选相关性分数。
+- 查询改写、子问题拆分和答案生成候选。
+- 本地模型加载、批处理、GPU 调度和模型评测。
+- 输出分数、向量、候选答案、候选引用和模型诊断。
+
+Python 禁止：
+
+- 绕过 Go 的 `TenantScope` 访问全库数据。
+- 自行查询权威私有表或决定当前有效 Claim。
+- 把模型生成的引用直接当成有效引用。
+- 修改 Transcript、Artifact、Claim 或索引源。
+- 在无证据时强行生成答案。
+- 将对话上下文写回 Meeting Memory。
+
+### 确定性检索与模型推理边界
+
+以下能力默认在 Go 中实现，保证可解释、可回放：
+
+- 权限过滤、元数据过滤和 SQL 查询。
+- FTS、向量库客户端、候选融合和 Meeting 聚合。
+- Claim 状态与时间过滤。
+- no-answer 最终门禁。
+- 引用合法性和播放检查。
+
+以下能力放在 Python 模型服务：
+
+- Embedding。
+- Cross-encoder Reranker。
+- 本地查询改写模型。
+- 本地答案生成模型。
+
+LangGraph 可以作为 Python 研究 Provider 参加对照实验，但不能拥有权限、检索事实、Claim
+状态或正式查询状态机。稳定查询编排由 Go 控制；移除 LangGraph 后，基础 Search、拒答和引用
+能力仍必须工作。
+
+### 通信与部署
+
+- Embedding 和 Reranker 使用批量 gRPC 请求，设置最大候选数、Token 预算和 Deadline。
+- 大批量离线建索引通过后台任务完成，在线查询不得同步重建全量索引。
+- Python 模型服务按查询队列、Batch、GPU/CPU 利用率、QPS 和推理 P99 扩容。
+- Go Retrieval Service 按查询 QPS、连接数、数据库连接池和端到端 P99 扩容。
+- 外部答案模型失败时退化为排序后的证据，不把基础检索可用性绑定在 LLM 上。
+
 ## 输入
 
 ```json
@@ -339,9 +427,9 @@ AnswerGenerator
   - LLM
 
 QueryOrchestrator
-  - LangGraph
-  - 普通状态机
-  - 其他编排
+  - Go确定性查询状态机（基线）
+  - Go多阶段研究编排
+  - Python LangGraph研究Provider（非权威、可关闭）
 ```
 
 ## 研究重点

@@ -22,6 +22,202 @@ NotaRitmo 是一个面向 Linux、Android、Web 和外部系统的会议 AI 架�
 | 05 | [检索研究 Retrieval / Research](05-retrieval-research/README.md) | 从逐字稿、单会产物和记忆中召回证据并回答问题 | `SearchResult`、`QueryResult` |
 | 06 | [产品与交互 Product Interaction](06-product-interaction/README.md) | 向客户端提供身份、任务、修订、搜索、问答和导出能力 | 稳定产品 API |
 
+## 技术语言与运行时架构
+
+### 已确定的技术原则
+
+NotaRitmo 的主平台统一使用 Go，本地 AI 模型统一使用 Python：
+
+> Go 拥有业务状态、权限、合同、任务、Provider 编排、验证和持久化；Python 只拥有模型加载、
+> 批处理和推理过程，不拥有产品事实。
+
+不为六个模块分别维护 Python 与 Rust 两套实现，也不要求一个模块只能使用一种语言。模块是
+领域边界，语言按执行性质分工：
+
+| 执行性质 | 权威实现 | 负责内容 |
+|---|---|---|
+| 在线产品与控制面 | Go | API、多租户、权限、任务、状态机、Provider 路由、缓存、成本、数据库事务 |
+| 工作流与后台执行 | Go | Temporal Workflow、Activity、超时、重试、补偿、恢复、取消和阶段状态 |
+| 本地模型推理面 | Python | ASR、Diarization、声纹、对齐、LLM、Embedding、Reranker 和模型实验 |
+| 高性能模型服务 | Python / Triton | 模型常驻、动态批处理、并发实例、GPU 调度和推理指标 |
+| 媒体原生工具 | FFmpeg / ffprobe | 探测、解码、转码、重采样、声道和基础滤镜 |
+| 权威数据与对象存储 | PostgreSQL / MinIO | 事务事实、版本、权限、索引源、音频和大型中间产物 |
+| 可重建检索与关系投影 | pgvector / FTS / 可选图存储 | 向量、全文索引和图候选，不拥有产品真相 |
+| 经压测确认的 CPU/P99 热点 | 可选 Rust | 只重写有性能证据的窄组件，不复制整个业务模块 |
+
+Rust、Java、Node.js 和 PHP 均不是主平台的第二套实现：
+
+- Rust 只在 CPU Profile、内存测量和 P99 压测证明 Go 或 Python 某个窄路径成为瓶颈后引入。
+- Java 不作为并行后端；现阶段不增加 JVM、第二套领域模型和第二套 Temporal Worker。
+- Node.js / TypeScript 可以用于 Web 前端和构建工具，不拥有后端业务状态。
+- PHP 不进入核心处理、工作流、Memory 或 Retrieval 链路。
+- Android 客户端使用 Kotlin，但只消费 06 的稳定产品 API。
+
+### 六模块语言分工
+
+| 模块 | 权威控制层 | 模型或原生执行层 | 语言结论 |
+|---|---|---|---|
+| 01 媒体接入 | Go | FFmpeg / ffprobe；可选 Python 音频增强模型 | 基本纯 Go |
+| 02 转写还原 | Go | Python ASR、Diarization、对齐、声纹模型；云 ASR 由 Go 调用 | Go + Python |
+| 03 单会议理解 | Go | Python 本地 LLM/NLP；外部 LLM 由 Go 调用 | Go + Python |
+| 04 跨会议记忆 | Go | 可选 Python 实体/关系候选与 Graphiti 实验 | Go 为绝对核心 |
+| 05 检索研究 | Go | Python Embedding、Reranker、本地答案模型 | Go + Python |
+| 06 产品与交互 | Go | Linux、Android、Web 客户端在平台外 | 纯 Go 后端 |
+
+02 和 03 不是纯 Python。它们的模型算法可以由 Python 实现，但 Provider 选择、请求幂等、
+输入输出版本、缓存、成本、证据校验、错误语义和权威结果必须由 Go 控制。04 更不能由某个
+Python Memory 框架拥有：Python 只能产生候选，Go 和 PostgreSQL 决定什么成为当前有效事实。
+
+### 运行拓扑
+
+```mermaid
+flowchart TB
+    Client["Linux / Android / Web / External API"] --> API["Go: Product API"]
+    API --> Core["Go: Platform Core"]
+    API --> Workflow["Go: Temporal Workflow Workers"]
+
+    Workflow --> MediaGo["Go: Media Worker"]
+    Workflow --> TranscriptGo["Go: Transcript Controller"]
+    Workflow --> IntelligenceGo["Go: Intelligence Controller"]
+    Workflow --> MemoryGo["Go: Memory Service"]
+    API --> RetrievalGo["Go: Retrieval Service"]
+
+    MediaGo --> FFmpeg["FFmpeg / ffprobe"]
+
+    TranscriptGo --> CloudASR["Cloud ASR Providers<br/>Tingwu / future providers"]
+    TranscriptGo --> ASRPython["Python: ASR / Diarization / Alignment"]
+
+    IntelligenceGo --> CloudLLM["External LLM Providers"]
+    IntelligenceGo --> IntelligencePython["Python: Local LLM / NLP"]
+
+    MemoryGo --> CandidatePython["Python: Entity / Relation Candidates<br/>optional Graphiti experiments"]
+
+    RetrievalGo --> RetrievalPython["Python: Embedding / Reranker / Local Answer Model"]
+
+    Core --> PostgreSQL[("PostgreSQL")]
+    MediaGo --> MinIO[("MinIO")]
+    TranscriptGo --> PostgreSQL
+    IntelligenceGo --> PostgreSQL
+    MemoryGo --> PostgreSQL
+    RetrievalGo --> PostgreSQL
+    RetrievalGo --> Projection[("pgvector / FTS / optional graph projection")]
+
+    ASRPython -. large object URI .-> MinIO
+    IntelligencePython -. structured candidate .-> IntelligenceGo
+    CandidatePython -. candidate only .-> MemoryGo
+    RetrievalPython -. scores / vectors / generated candidate .-> RetrievalGo
+```
+
+这张图表达的是权威方向，不代表第一天就部署十几个服务。研究期可以使用一个 Go 模块化
+平台加若干 Python 模型进程；只有扩缩容、GPU 隔离、故障隔离或发布节奏出现真实需求时，
+才拆成独立服务。
+
+### Go 平台的权威职责
+
+Go 平台统一负责：
+
+- 创建并传播 `tenant_id`、`request_id`、`correlation_id`、`trace_id` 和幂等键。
+- 执行身份验证、授权、租户隔离、配额、限流、审计和删除传播。
+- 定义并验证跨模块 Schema、稳定 ID、版本、状态机、错误码和事件语义。
+- 运行 Temporal Workflow 和 Activity，管理超时、重试、补偿、恢复、取消和部分成功。
+- 根据能力、地域、隐私、质量、延迟和成本选择云端或本地 Provider。
+- 记录输入哈希、Provider、模型、Prompt、算法、Token、成本、耗时和质量报告。
+- 校验 Python 或外部 Provider 的结果，并转换为模块的权威输出。
+- 管理 PostgreSQL 事务、Outbox、对象引用、索引重建和缓存失效。
+- 向客户端提供稳定产品 API，不暴露内部模型、数据库或 Provider 原始结构。
+
+### Python 模型面的职责
+
+Python 模型进程只负责：
+
+- 加载、预热、卸载和版本化本地模型。
+- 对请求进行长度分桶、动态批处理、GPU/CPU 调度和资源限制。
+- 执行 ASR、Diarization、声纹、Forced Alignment、LLM、Embedding 和 Reranker 推理。
+- 返回文本、分数、向量、时间区间、候选关系、模型置信度和诊断指标。
+- 支持离线评测、Shadow、A/B、模型替换和回放。
+
+Python 模型进程禁止：
+
+- 直接创建产品级 `meeting_id`、`claim_id`、权限或租户关系。
+- 直接修改权威 PostgreSQL 业务表。
+- 自行决定重试、当前有效 Claim、用户可见范围或产品状态。
+- 把模型候选未经 Go 校验直接发布为 Transcript、Artifact、Memory 或正式答案。
+- 直接向 Android、Linux 或 Web 客户端提供产品接口。
+- 把完整音频、逐字稿或敏感信息写入普通日志。
+
+### 跨语言通信规则
+
+| 数据类型 | 推荐通道 | 规则 |
+|---|---|---|
+| 小型同步结构 | gRPC / Protobuf | 明确 Deadline、错误码、Schema 版本和最大消息大小 |
+| 产品 HTTP 接口 | REST / JSON 或流式 SSE | 只由 Go 的 06 模块对外提供 |
+| 后台长任务 | Go Temporal Workflow / Activity | Go 拥有耐久状态；模型调用可提交、轮询、取消和恢复 |
+| 大型音频、模型输入和归档 | MinIO URI | 不通过 JSON、事件或 Temporal History 搬运大对象 |
+| 领域事件 | Outbox + 消息通道 | 只携带稳定 ID、版本和摘要，消费者必须幂等 |
+| 权威状态 | PostgreSQL | 所有写入经过拥有该数据的 Go 模块 |
+| 向量与图候选 | pgvector / 可选图投影 | 可删除、可重建，不能反向覆盖权威事实 |
+
+所有跨语言对象都必须来自同一个版本化 Schema 源，并至少包含：
+
+```text
+tenant_id
+resource_id
+schema_version
+source_hash
+producer
+producer_version
+created_at
+correlation_id
+trace_id
+```
+
+Go 和 Python 都要运行同一组合同 Fixture：Go 验证领域约束，Python 验证模型输入输出，端到端
+测试验证同一请求经过序列化、模型调用和反序列化后语义不漂移。
+
+### 建议的进程与容器边界
+
+初期建议保持少量部署单元：
+
+```text
+Go
+├── notaritmo-api
+├── notaritmo-workflow-worker
+├── notaritmo-media-worker
+└── platform-core packages
+    ├── transcript
+    ├── intelligence
+    ├── memory
+    └── retrieval
+
+Python
+├── model-asr
+├── model-intelligence
+└── model-retrieval
+
+Infrastructure
+├── PostgreSQL / pgvector
+├── MinIO
+├── Temporal
+└── optional Triton / graph projection
+```
+
+- `platform-core packages` 是 Go 领域包，不要求初期分别部署。
+- Python 按模型、GPU 占用和扩缩容特征拆进程，不按租户或用户启动模型。
+- 多个租户共享模型副本池，但请求、缓存、日志、对象路径和结果始终带租户边界。
+- 模型常驻并跨请求批处理；API QPS、音频分钟积压、GPU RTF、Token/s 和检索 P99 分别扩缩容。
+- 将来拆服务时保持合同不变，Android 和其他客户端不需要知道内部拆分。
+
+### Rust 引入门槛
+
+只有同时满足以下条件，才允许把窄组件改写为 Rust：
+
+1. 真实并发压测已经稳定复现问题。
+2. CPU Profile 证明目标函数或路径占据主要 CPU，而不是等待数据库、Provider、GPU 或磁盘。
+3. P99、吞吐或内存未达到明确 SLO。
+4. Go/Python 的批处理、算法、缓存、查询和数据搬运优化已经完成。
+5. Rust 版本拥有相同合同 Fixture、黄金结果和回归评测。
+6. Rust 只替换窄 Provider 或库，不复制该模块的状态机、权限和持久化规则。
+
 这六个模块是领域边界，不等于六个进程、六个容器或六个微服务。研究期可以是模块化单体，
 部署期再根据算力、扩缩容、故障隔离和团队边界拆分服务。
 
@@ -78,9 +274,10 @@ flowchart LR
 | 模型与 Provider 面 | ASR、LLM、Embedding、Reranker、网关、限额、成本路由 | 稳定领域合同 |
 | 评测与可观测面 | Trace、指标、日志、离线评测、回放、Shadow、质量门禁 | 修改权威结果 |
 
-Temporal、消息队列或普通状态机属于工作流与执行面；PostgreSQL、对象存储、pgvector、
-Neo4j 属于数据证据与存储面；LiteLLM 或其他网关属于模型与 Provider 面。它们是实现选择，
-不是新的业务模块。
+当前基线由 Go Temporal Workflow / Activity 实现耐久工作流；消息队列和普通状态机只能作为
+局部传输、测试替身或对照实现，不能形成第二套权威任务状态。PostgreSQL、对象存储、pgvector、
+Neo4j 属于数据证据与存储面；LiteLLM 或其他网关属于模型与 Provider 面。它们不是新的业务模块，
+也不能越过拥有者模块控制产品事实。
 
 ## 数据权威与可重建投影
 

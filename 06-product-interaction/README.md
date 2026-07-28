@@ -6,6 +6,75 @@
 
 这一块组织前五块的结果和用户操作，但不实现它们的算法。
 
+## 实现语言与运行边界
+
+### 语言结论
+
+本模块的后端权威实现使用 Go：
+
+```text
+Go Product Backend
+├── Identity / Tenant / Permission
+├── Meeting API
+├── Upload Coordination
+├── Job Projection
+├── Search / Query API
+├── Conversation
+├── Review / Correction
+├── Card / Todo
+├── Export / Notification / Webhook
+├── Rate Limit / Quota / Billing
+└── SSE / WebSocket / Audit
+```
+
+Go 负责：
+
+- 注册、登录、OIDC、Token、用户、组织、租户、项目和会议成员。
+- 角色、授权、分享、撤销、配额、限流、计费和审计。
+- 提供上传入口，创建会议和聚合处理 Job。
+- 调用前五块的稳定命令与查询，不访问其私有表或 Provider。
+- 把各模块状态聚合为客户端可理解的 `READY`、`PARTIAL`、`FAILED` 等产品状态。
+- 提供会议列表、详情、Transcript、Artifact、Memory、Search 和 Query API。
+- 提供 SSE / WebSocket 进度、流式答案、通知和 Webhook。
+- 组织人工修订、Speaker 确认、Claim 审核和冲突处理流程。
+- 管理对话、卡片、Todo、导出、反馈和外部系统适配。
+- 将内部错误映射为稳定产品错误码和恢复操作。
+- 保持 API 版本兼容，使内部 Provider 或服务拆分不影响客户端。
+
+本模块不需要 Python 后端。Android 使用 Kotlin，Web 可以使用 TypeScript，Linux 客户端可以
+采用适合产品的技术，但它们都位于稳定 Go API 之外。Node.js 只允许用于 Web 构建、SSR 或
+前端 BFF，不拥有会议、权限、Job、Claim 和对话的权威状态。
+
+本模块禁止：
+
+- 直接调用听悟、具体 ASR、具体 LLM、Embedding 或 Reranker。
+- 直接读取 pgvector、Neo4j、模型缓存或前五块私有业务表。
+- 接收 Python 模型服务的原始结果并绕过拥有者模块返回客户端。
+- 自行判断当前有效 Claim、生成 Transcript 或执行 RAG 算法。
+- 把用户聊天、Todo 或手工编辑静默升级成会议事实。
+- 把内部服务名、Provider ID、密钥、对象路径或原始错误暴露给客户端。
+
+### 客户端关系
+
+```text
+Android Kotlin ─┐
+Linux Client ───┼──> Go Product API ──> 前五个模块稳定接口
+Web TypeScript ─┤
+External API ───┘
+```
+
+客户端只依赖稳定资源 ID、Schema、状态和错误码。听悟切换为本地 ASR、外部 LLM 切换为
+本地模型、pgvector 替换为其他向量库，均不要求发布新客户端。
+
+### 部署与扩容
+
+- `notaritmo-api` 负责同步 API、SSE/WebSocket 和鉴权。
+- `notaritmo-workflow-worker` 负责 Temporal Workflow 与后台业务 Activity。
+- 两者可以共享 Go 领域包，但独立扩容和发布。
+- API 按 QPS、活跃连接、上传并发和端到端 P99 扩容。
+- Workflow Worker 按任务积压、Activity Slot、重试率和阶段耗时扩容。
+- 多租户共享服务实例，不为每个用户启动独立后端；所有缓存、对象、索引和日志必须携带租户边界。
+
 ## 输入
 
 - 用户身份、租户、项目和权限上下文。

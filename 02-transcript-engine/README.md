@@ -6,6 +6,89 @@
 
 > 谁，在什么时间，说了什么。
 
+## 实现语言与运行边界
+
+### 语言结论
+
+本模块采用 Go 控制层加 Python 本地模型层，不是纯 Python：
+
+```text
+Go Transcript Controller
+├── TingwuTranscriptionProvider
+├── FutureCloudTranscriptionProvider
+├── LocalTranscriptionProvider Client
+├── Provider Routing / Cache / Cost
+├── Schema Validation / Normalization
+└── Transcript Authority / Versioning
+                  │
+                  ▼
+Python Local Model Service
+├── ASR
+├── VAD Model
+├── Diarization
+├── Overlap Detection
+├── Speaker Embedding
+├── Forced Alignment
+└── Model-specific Post-processing
+```
+
+Go 负责：
+
+- 接收 `TranscribeMedia`，验证租户、媒体版本、幂等键和处理策略。
+- 根据能力、语言、地域、隐私、质量、成本和健康状态选择 Provider。
+- 直接调用听悟或未来的云 ASR，并归档 Provider 原始响应引用。
+- 调用 Python 本地模型服务，但不感知其框架、Checkpoint 和 GPU 实现。
+- 管理任务提交、轮询、Deadline、取消、退避重试、降级和 Provider 切换。
+- 记录输入哈希、Provider、模型版本、延迟、成本和质量数据。
+- 把所有 Provider 结果转换为统一候选结构。
+- 生成稳定的 Speaker、Segment、Word ID 和最终版本。
+- 校验时间范围、文本非空、区间顺序、词与 Segment 归属及媒体版本。
+- 发布权威 `TranscriptBundle` 和 `TranscriptReady`。
+- 接收经授权的文字、时间轴和 Speaker 修订，创建新 Transcript 版本。
+
+Python 负责：
+
+- 本地模型加载、预热、批处理、显存管理和推理。
+- ASR、VAD、Diarization、Overlap Detection、Speaker Embedding 和 Forced Alignment。
+- 模型所需的特征提取、长度分桶、音频切片和模型特定后处理。
+- 返回候选 Segment、Word、Speaker、时间戳、分数和模型诊断信息。
+- 离线评测 WER/CER、DER、JER、SA-WER、时间戳偏差和 RTF。
+
+Python 禁止：
+
+- 创建最终产品 `meeting_id`、权威 Segment ID 或租户关系。
+- 直接写入 Transcript 权威业务表。
+- 自行将某次候选结果发布为正式 Transcript。
+- 决定用户是否有权读取音频、声纹或转写。
+- 把完整音频或逐字稿写入普通日志。
+- 直接向客户端返回听悟或本地模型的原始结构。
+
+### 两条执行路径
+
+云端路径：
+
+```text
+MediaAsset -> Go -> Tingwu/Cloud ASR -> Go Normalize/Validate -> TranscriptBundle
+```
+
+本地路径：
+
+```text
+MediaAsset URI -> Go -> Python Model Service -> Go Normalize/Validate -> TranscriptBundle
+```
+
+无论走哪条路径，下游只能读取相同的 `TranscriptBundle`。听悟是 Go 控制层中的一个
+`TranscriptionProvider`，后续模块永远不能读取听悟原始 JSON。
+
+### 通信与部署
+
+- Go 与 Python 使用版本化 gRPC / Protobuf 或等价内部合同。
+- 音频通过受限 MinIO URI 传递，不通过 RPC 搬运长音频字节。
+- Go Temporal Worker 拥有耐久任务状态；Python 是可取消、可健康检查的模型服务。
+- Python 按模型和 GPU 扩容，不按租户启动独立模型。
+- 多租户请求可以共享模型副本和 Batch，但缓存键、日志、结果和对象路径必须隔离。
+- 扩容指标使用待处理音频分钟数、RTF、GPU 利用率、显存、Batch 等待和处理 P95/P99。
+
 ## 输入
 
 标准`MediaAsset`：

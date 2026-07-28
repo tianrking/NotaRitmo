@@ -8,6 +8,91 @@
 
 > 这一场会议讲了什么、决定了什么、谁需要做什么、有哪些风险和未解决问题。
 
+## 实现语言与运行边界
+
+### 语言结论
+
+本模块采用 Go 控制层加 Python 本地模型层，不是纯 Python：
+
+```text
+Go Intelligence Controller
+├── Input Builder
+├── Prompt / Schema / Model Version
+├── External LLM Providers
+├── Cache / Token / Cost
+├── Evidence Validator
+├── Quality Gate
+└── Artifact Authority
+                 │
+                 ▼
+Python Local Intelligence Service
+├── Local LLM
+├── NLP / Topic Model
+├── Keyword / Clustering
+├── Candidate Extraction
+└── Model Evaluation
+```
+
+Go 负责：
+
+- 验证 `TranscriptBundle`、会议元数据、租户权限和指定输入版本。
+- 构造一次统一语义提取输入，避免为每个组件重复传输全文。
+- 管理 Prompt、Schema、模型、规则、算法和评测版本。
+- 直接调用 Qwen、OpenAI、Claude 等外部 LLM Provider。
+- 调用 Python 本地 LLM/NLP 服务并管理 Deadline、取消、降级和重试。
+- 通过输入哈希缓存结果，记录 Token、成本、延迟和 Provider Run。
+- 对候选摘要、事实、决策、行动项、风险和七类组件执行 Schema 校验。
+- 验证每个正式结论的 `EvidenceRef`、Segment、时间范围、原文和 Transcript 版本。
+- 拒绝不存在的负责人、截止日期、数字、人物或引用。
+- 执行质量门禁、多模型仲裁和人工复核路由。
+- 发布权威 `MeetingArtifactBundle`，并保留旧版本和生产链路。
+
+Python 负责：
+
+- 本地 LLM 加载、量化、批处理、GPU 调度和结构化生成。
+- 摘要、章节、议题、事实、决策、行动项、风险、开放问题和人员观点候选提取。
+- 关键词、主题聚类、词云权重、树状图和思维导图候选数据。
+- 规则、传统 NLP 与模型组合实验。
+- 生成候选置信度、模型诊断和评测输出。
+
+Python 禁止：
+
+- 直接把生成文本写入 Artifact 权威表。
+- 绕过 Go 的 Evidence 校验发布事实、决策或行动项。
+- 自行决定权限、重试、成本策略和产品可见状态。
+- 把“模型说得像真的”当成证据。
+- 读取当前会议范围之外的数据；跨会议属于 04 和 05。
+- 直接向客户端提供会议摘要或问答 API。
+
+### 外部与本地模型路径
+
+外部 LLM：
+
+```text
+TranscriptBundle -> Go Input Builder -> External LLM
+                 -> Go Schema/Evidence/Quality Validation
+                 -> MeetingArtifactBundle
+```
+
+本地模型：
+
+```text
+TranscriptBundle -> Go Input Builder -> Python Local Model
+                 -> Go Schema/Evidence/Quality Validation
+                 -> MeetingArtifactBundle
+```
+
+两条路径使用相同输入合同、输出 Schema、Evidence 规则和评测集。替换模型只产生新的
+`producer_version`，不能改变下游合同。
+
+### 通信与部署
+
+- 小型结构化请求使用 gRPC / Protobuf；超长 Transcript 使用受权限保护的对象 URI 或分块输入。
+- Go Temporal Worker 拥有任务状态、重试和版本；Python 不拥有工作流。
+- 外部 LLM 密钥和路由策略由 Go Provider 层管理。
+- Python 模型进程按 Token 队列、GPU 利用率、Token/s、首 Token 延迟和 P99 扩容。
+- 同一输入、模型、Prompt、Schema 和生成参数形成完整缓存键，不能只用会议 ID 缓存。
+
 ## 输入
 
 标准`TranscriptBundle`，以及可选会议元数据：

@@ -6,6 +6,59 @@
 
 它完全不知道转写、摘要、Memory、RAG和用户问答。
 
+## 实现语言与运行边界
+
+### 语言结论
+
+本模块的权威实现使用 Go，媒体探测与转换调用 FFmpeg / ffprobe。初始版本不需要 Python：
+
+```text
+Go Media Intake
+├── Upload / URL Import
+├── Validation
+├── Streaming Hash
+├── Deduplication
+├── Object Storage
+├── Job State
+└── FFmpeg / ffprobe Process Adapter
+```
+
+Go 负责：
+
+- 建立 `tenant_id`、`media_id`、对象路径、版本和幂等键。
+- 流式接收上传，不把完整文件一次性读入内存。
+- URL 安全校验、下载限制、重定向限制、超时和取消。
+- MIME、容器、Codec、大小、时长和完整性验证。
+- SHA-256、重复检测、断点续传和对象存储提交。
+- 安全调用 ffprobe 获取技术元数据。
+- 安全调用 FFmpeg 完成转码、重采样、声道转换和基础滤镜。
+- 生成并验证权威 `MediaAsset`。
+- 管理媒体任务状态、错误语义、审计和删除传播。
+
+FFmpeg / ffprobe 只负责媒体计算，不拥有：
+
+- 产品 ID、租户、权限和对象命名规则。
+- `MediaAsset` Schema、状态机和错误码。
+- 重试、幂等、缓存、保留期和删除策略。
+
+只有在未来引入神经网络降噪、语音增强或学习型质量评分时，才允许增加可选 Python
+`AudioEnhancementProvider`。该 Provider 只能读取临时对象 URI，返回增强音频 URI、分数和
+模型版本；Go 仍然决定是否采用结果并生成新的媒体版本。
+
+本模块禁止：
+
+- 因某个 ASR Provider 的私有要求改变公共 `MediaAsset`。
+- 让 Python 直接写入媒体权威表或自行决定对象路径。
+- 通过 gRPC、JSON、Temporal History 或领域事件传输完整媒体字节。
+- 把音频内容、签名 URL、访问密钥或完整本地路径写入普通日志。
+- 在没有 Profile 和 SLO 证据时引入 Rust 第二实现。
+
+### 部署结论
+
+初期作为 `notaritmo-media-worker` Go 进程部署，FFmpeg / ffprobe 与其位于同一受控容器。
+大型输入直接进入 MinIO，Go Worker 只传递对象 URI 和有限技术元数据。需要独立扩容时按照
+并发上传数、待处理媒体分钟数、转码 CPU 和磁盘/网络吞吐扩容，而不是按用户创建容器。
+
 ## 输入
 
 - MP3。
