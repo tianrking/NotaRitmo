@@ -89,6 +89,209 @@ MediaAsset URI -> Go -> Python Model Service -> Go Normalize/Validate -> Transcr
 - 多租户请求可以共享模型副本和 Batch，但缓存键、日志、结果和对象路径必须隔离。
 - 扩容指标使用待处理音频分钟数、RTF、GPU 利用率、显存、Batch 等待和处理 P95/P99。
 
+## 多语言、方言与可训练 ASR 战略
+
+### 听悟公开语言边界
+
+以下矩阵基于 2026-07-29 可查到的听悟官方指南、API Schema 和发布记录。它描述的是公开承诺，
+不是对每种口音、噪声和会议环境准确率的保证：
+
+| 听悟模式 | 公开语言范围 | 约束 | 本项目状态 |
+|---|---|---|---|
+| 已知单语种 | 中文 `cn`、英文 `en`、粤语 `yue`、日语 `ja`、韩语 `ko` | 实时指南中中文支持 8K/16K，其余四种只支持 16K | 可建立正式验收 |
+| 离线自动单语种 `auto` | 当前离线指南列中、英、日、粤、韩 | 仅离线、仅 16K；一个文件选择一个单语模型 | 可建立正式验收 |
+| 多语混说 `multilingual` | 中、英、粤、日、韩、德、法、俄 | 仅 16K；使用 `LanguageHints` 限定语言集合 | 可建立正式验收 |
+| 中英自由说 `fspk` | 中文与英文 Code-switch | 仍出现在较旧 CreateTask Schema | 兼容配置，不作为新默认 |
+| 离线泰语 | 2024-09/10 发布记录声明新增单语及 auto 泰语 | 当前离线指南的 auto 范围仍未列泰语 | 必须真实 API 验收后才能标记支持 |
+| 听悟 `fun-asr` | 设置 `Transcription.Model=fun-asr` 且 `SourceLanguage=multilingual` | 2025-09 发布；听悟文档未完整枚举其语言和方言清单 | 独立实验 Profile，不能自动继承宣传范围 |
+
+官方来源：
+
+- [听悟离线语种选择、auto 与 multilingual](https://help.aliyun.com/zh/tingwu/offline-transcribe-of-audio-and-video-files/)
+- [听悟实时语种选择与 LanguageHints](https://help.aliyun.com/zh/tingwu/interface-and-implementation)
+- [听悟 CreateTask API Schema](https://help.aliyun.com/zh/tingwu/api-tingwu-2023-09-30-createtask)
+- [听悟发布记录：泰语、multilingual 与 fun-asr](https://help.aliyun.com/zh/tingwu/release-notes)
+
+这些官方页面存在版本不同步：CreateTask Schema 仍主要列 `cn/en/fspk/ja/yue`，当前指南已经
+列出 `ko/auto/multilingual`，发布记录又声明泰语和 `fun-asr`。因此不能只依赖静态枚举判断
+产品能力，必须同时记录文档来源、真实任务是否接受、输出语言和黄金集质量。
+
+### 方言边界
+
+听悟默认接口明确列出的中文非普通话语种只有粤语。当前听悟指南没有完整承诺吴语、闽南语、
+客家话、赣语、湘语、晋语、四川话、河南话等方言的默认识别范围。
+
+阿里云百炼的 Fun-ASR 产品文档单独声明其主版本支持普通话、粤语、吴语、闽南语、客家话、
+赣语、湘语、晋语，以及中原、西南、冀鲁、江淮、兰银、胶辽、东北、北京、港台等地区口音，
+并支持多种外语；但这不能直接证明听悟包装的 `fun-asr` Profile 在任务参数、说话人分离、
+词级时间戳和全部方言上具有完全相同的能力。必须分别验收：
+
+- 听悟是否接受该语言/方言参数。
+- 返回文本是否保留原语言而非错误映射到普通话。
+- Word 时间戳、Speaker 和标点是否仍然完整。
+- CER/WER、方言字词准确率和 SA-WER 是否达到门槛。
+- 听悟摘要等下游能力是否支持该转写语言；不能用“ASR 可识别”推导“所有听悟功能可用”。
+
+参考：[百炼 Fun-ASR 语言与方言范围](https://help.aliyun.com/zh/model-studio/asr-model/)。
+
+### 能力注册表
+
+Go 控制层维护版本化 `LanguageCapabilityRegistry`，不在代码中散落语言判断：
+
+```json
+{
+  "provider": "tingwu",
+  "provider_model": "fun-asr",
+  "mode": "offline",
+  "language": "de",
+  "dialect": null,
+  "mixed_language": true,
+  "sample_rates": [16000],
+  "word_timing": "verified",
+  "diarization": "verified",
+  "hotword": "unsupported",
+  "fine_tuning": "unsupported",
+  "acceptance_status": "experimental",
+  "last_verified_at": "2026-07-29",
+  "evidence_run_ids": ["run_xxx"],
+  "source_documents": ["tingwu-release-notes-2025-09"]
+}
+```
+
+`acceptance_status` 只能是：
+
+```text
+documented
+api_accepted
+quality_verified
+experimental
+unsupported
+regressed
+```
+
+只有 `quality_verified` 可以成为指定语言、方言和场景的生产默认。文档宣传、HTTP 任务创建成功、
+返回了非空文本，都不能单独等同于质量通过。
+
+### Provider 路由
+
+```text
+语言/方言已知
+  ├── Tingwu Profile 已 quality_verified
+  │      └── TingwuProvider
+  ├── Tingwu fun-asr Profile 仅 documented/api_accepted
+  │      └── Shadow 或用户明确允许的实验流量
+  ├── Local ASR 已 quality_verified
+  │      └── LocalMultilingualASRProvider
+  ├── 其他云 Provider 已 quality_verified
+  │      └── FutureCloudTranscriptionProvider
+  └── 无合格 Provider
+         └── LANGUAGE_UNSUPPORTED，拒绝伪造转写
+```
+
+语言未知时先执行受控语言识别或短片段探测，再选择 Provider。不能把不支持的语言强制作为中文、
+英文或 `multilingual` 提交后接受乱码式结果。翻译和 LLM 也不能恢复 ASR 已经丢失的原始内容。
+
+### 为什么必须建设自己的 ASR 服务
+
+听悟适合作为商业基线和已覆盖场景的生产 Provider，但它不能保证：
+
+- 所有目标语言和方言均可识别。
+- 每种语言都有热词、领域词典和相同的 Speaker/时间戳能力。
+- 用户可以上传训练数据并微调听悟模型。
+- 固定录音卡、房间、口音和行业术语能够专门适配。
+- 模型升级不会导致某个语言或方言回归。
+- 数据必须留在本地时仍可使用。
+
+听悟公开 API 没有用户自助 ASR 训练接口。百炼当前 Fun-ASR 模型页同样将“模型调优”标记为
+不支持。因此，为了产品可承诺的语言、方言、隐私和可训练能力，本模块必须提供自己的
+`LocalMultilingualASRProvider`，但不要求第一天替换听悟，也不要求从零预训练模型。
+
+```text
+Python Local ASR Service
+├── Multilingual Base Model
+├── Language / Dialect Router
+├── Adapter Registry
+│   ├── Language Adapter
+│   ├── Dialect / Accent Adapter
+│   ├── Domain Adapter
+│   └── Device / Acoustic Adapter
+├── Context / Hotword Biasing
+├── Inference and Dynamic Batching
+├── Model Version and Rollback
+└── Offline Evaluation
+```
+
+基础模型、Adapter 和训练工具都必须满足目标商业许可证。只开放推理权重但没有训练 Recipe 的
+模型不能被文档标记为“可微调方案”；推理效果好与可训练、可复现是两项独立验收。
+
+### 微调不是每种语言复制一个完整模型
+
+默认策略是共享多语言基础模型，再根据真实数据选择：
+
+```text
+多语言基础模型
+├── 不微调：语言提示 + 上下文 + 热词
+├── 语言 Adapter：基础语言长期不足
+├── 方言/口音 Adapter：目标方言持续错误
+├── 领域 Adapter：人名、产品、型号和专业术语
+└── 声学 Adapter：固定录音卡、房间、远场和噪声条件
+```
+
+只有在 Adapter 无法达到目标、语言之间存在明显负迁移、算力允许并且数据足够时，才评估独立
+完整模型。不能因为产品支持十种语言，就预先维护十份完整权重。
+
+微调启动条件：
+
+1. Tingwu、未微调本地模型、热词和上下文方法已经在同一黄金集完成基线。
+2. 错误能够归因于目标语言、方言、领域或声学条件，而不是标注错误和 Speaker 错配。
+3. 已经具有合法、经过人工校验的音频与逐字稿。
+4. 训练、开发和最终测试按会议与 Speaker 隔离，避免同一人泄漏。
+5. 明确主要指标、非目标语言回归门槛、资源预算和回滚模型。
+6. 训练框架、基础权重和数据许可证允许商业训练与部署。
+
+### 微调数据合同
+
+```json
+{
+  "sample_id": "sample_xxx",
+  "tenant_id": "tenant_xxx",
+  "audio_uri": "object://training/audio.wav",
+  "audio_hash": "sha256:...",
+  "start_ms": 0,
+  "end_ms": 18240,
+  "language": "zh",
+  "dialect": "zh-southwestern-mandarin",
+  "transcript_raw": "我们先看一下这个版本",
+  "transcript_normalized": "我们先看一下这个版本",
+  "speaker_id": "gold_speaker_01",
+  "device_profile": "recorder_card_v1",
+  "acoustic_tags": ["far_field", "meeting_room", "air_conditioner"],
+  "domain_tags": ["software", "android"],
+  "annotation_status": "double_checked",
+  "consent_scope": "model_training",
+  "split": "train"
+}
+```
+
+训练数据必须区分产品使用授权与模型训练授权。删除请求需要传播到原始音频、切片、Manifest、
+训练缓存和后续可识别的训练版本；声纹数据不能因参加 ASR 训练而默认获得额外授权。
+
+### 多语言与方言验收
+
+每个语言/方言单独报告，不允许只使用总体平均分：
+
+- 每语言 CER/WER 和置信区间。
+- 方言内 CER/WER、普通话错误映射率和专有词准确率。
+- Code-switch 边界准确率和语言混入率。
+- 每语言 DER、SA-WER、Speaker 数量误差和时间戳误差。
+- 近场、远场、噪声、重叠和固定录音卡分桶。
+- 未微调基础模型、热词、Adapter、完整微调和听悟的成对比较。
+- 非目标语言回归、灾难性遗忘和语言路由错误率。
+- RTF、GPU 显存、吞吐、启动时间和每音频小时成本。
+
+ASR 微调只改善文字识别，不自动改善 Diarization、Overlap Detection、声纹或 Forced Alignment。
+这些子能力继续按各自黄金标注和指标独立替换。
+
 ## 输入
 
 标准`MediaAsset`：
@@ -113,6 +316,12 @@ MediaAsset URI -> Go -> Python Model Service -> Go Normalize/Validate -> Transcr
   "schema_version": "transcript-bundle-v1",
   "media_id": "media_xxx",
   "language": "zh-CN",
+  "language_profile": {
+    "requested_mode": "single",
+    "detected_languages": ["zh-CN"],
+    "dialect": null,
+    "provider_capability_version": "tingwu-default-2026-07-29"
+  },
   "speakers": [
     {
       "speaker_id": "speaker_01",
@@ -127,6 +336,8 @@ MediaAsset URI -> Go -> Python Model Service -> Go Normalize/Validate -> Transcr
       "start_ms": 10200,
       "end_ms": 15600,
       "text": "我们决定先完成 Android 上传。",
+      "language": "zh-CN",
+      "dialect": null,
       "confidence": 0.94,
       "words": []
     }
@@ -146,7 +357,10 @@ MediaAsset URI -> Go -> Python Model Service -> Go Normalize/Validate -> Transcr
 
 - 离线文件转写。
 - 将来的实时流式转写。
-- 中文、英文和中英混合。
+- 听悟已验收语言的单语、自动语种和多语混说。
+- 自建 ASR 扩展听悟未覆盖或未通过质量验收的语言、方言和口音。
+- 多语言基础模型、语言/方言/领域/声学 Adapter 和版本化微调。
+- Segment 级语言、方言候选和 Code-switch 边界。
 - 标点恢复。
 - 数字、日期、金额和单位规范化。
 - 专有名词和英文缩写识别。
@@ -215,6 +429,9 @@ MediaAsset URI -> Go -> Python Model Service -> Go Normalize/Validate -> Transcr
 - 时间戳缺失。
 - Provider结果不完整。
 - 语言不匹配。
+- 语言或方言不支持。
+- Provider 文档支持但真实质量未通过。
+- 多语言路由错误和语言混入。
 - 可重试与不可重试错误分类。
 
 ## 数据所有权
@@ -348,6 +565,9 @@ cancel(ProviderTask) -> ProviderTaskStatus
 ## 重要边界
 
 - Tingwu只是这一块的一个Provider。
+- Tingwu未通过验收的语言和方言不能因任务创建成功而标记为产品支持。
+- 听悟 `fun-asr` 和百炼直调 Fun-ASR 是两个独立 Provider Profile，不能共享未经验证的能力结论。
+- 听悟和云端 Fun-ASR 不开放用户微调时，自建可训练 ASR 承担定制语言、方言和声学适配。
 - Tingwu原始JSON不能进入下游模块。
 - 本地ASR与云ASR必须产生同一个`TranscriptBundle`。
 - 这一块不生成摘要、章节、决策和待办。
@@ -391,7 +611,8 @@ VAD、对齐、Diarization、降噪、热词和后处理。
 
 | 方案 | 首轮角色 | 使用能力 | 需要验证 |
 |---|---|---|---|
-| Tingwu | 商业基线 `C0` | ASR、Speaker、段落、Word 时间戳、热词 | CER、DER、时间误差、长音频稳定性、成本、数据边界 |
+| Tingwu 默认模型 | 商业基线 `C0` | ASR、Speaker、段落、Word 时间戳、热词 | 每语言 CER、DER、时间误差、长音频稳定性、成本、数据边界 |
+| Tingwu `fun-asr` | 扩展云端基线 `C1` | `Model=fun-asr`、`SourceLanguage=multilingual` | 语言/方言真实范围、Speaker/时间戳完整性、与百炼直调能力差异 |
 
 官方文档表明 Tingwu 转写可以开启说话人分离、设置人数或不定人数、关联热词词表，并返回
 `SpeakerId` 及 Word 起止毫秒时间。它适合做统一商业基线，但官方字段存在不等于真实会议
@@ -406,6 +627,7 @@ VAD、对齐、Diarization、降噪、热词和后处理。
 | Paraformer + FSMN-VAD + CT-Punc | 速度对照 `A2` | 中文链路成熟、组件可拆、适合低资源与吞吐对照 | 语义鲁棒性、专业词和中英混合必须实测 |
 | Fun-ASR-Nano | 第二轮候选 | FunASR 当前旗舰 LLM-ASR 方向 | 工具代码与模型权重许可分开，先审查权重许可和运行资源 |
 | `fa-zh` | 轻量对齐对照 `T2` | 中文时间预测、组件较小 | 与 Qwen ForcedAligner 的精度必须单独标注比较 |
+| 可训练多语言基础模型 | 微调候选 `AF1` | 可建立语言、方言、领域和声学 Adapter | 必须先验证训练 Recipe、权重许可证、复现性和非目标语言回归 |
 
 Qwen3-ASR 官方同时提供 Transformers、vLLM、流式推理和独立 Forced Aligner。首轮只使用
 离线推理，不把不同运行后端和不同模型同时作为一个变量。FunASR 是工具箱，不把
@@ -456,6 +678,8 @@ Speaker 活动标注。首轮不需要下载全部训练集，先用 Eval/Test �
 - 手机近讲、桌面远场、会议室麦克风和网络会议录音。
 - 1 人、2 人、3–4 人、5 人以上。
 - 普通话、中英混合、口音和目标方言。
+- 听悟明确支持语言、文档冲突语言、目标扩展语言和明确不支持语言。
+- 单语、多语混说、Code-switch、相近语言混入和未知语种路由。
 - 安静、中度噪声、强噪声、回声、视频播放声和重叠语音。
 - 10 分钟以内、10–60 分钟、1 小时以上。
 - 人名、公司名、产品名、型号、金额、日期和英文缩写。
@@ -566,6 +790,11 @@ Paraformer + FSMN-VAD + fa-zh + 3D-Speaker/CAM++
 ## 官方研究依据
 
 - [Tingwu 语音转写、说话人分离、热词和返回结构](https://help.aliyun.com/zh/tingwu/voice-transcription/)
+- [Tingwu 离线语言、auto、multilingual 与 LanguageHints](https://help.aliyun.com/zh/tingwu/offline-transcribe-of-audio-and-video-files/)
+- [Tingwu 实时语言与多语混说](https://help.aliyun.com/zh/tingwu/interface-and-implementation)
+- [Tingwu CreateTask API Schema](https://help.aliyun.com/zh/tingwu/api-tingwu-2023-09-30-createtask)
+- [Tingwu 发布记录：泰语、multilingual 与 fun-asr](https://help.aliyun.com/zh/tingwu/release-notes)
+- [百炼 Fun-ASR 支持语言、方言与模型调优边界](https://help.aliyun.com/zh/model-studio/asr-model/)
 - [Qwen3-ASR 与 Forced Aligner](https://github.com/QwenLM/Qwen3-ASR)
 - [FunASR](https://github.com/modelscope/FunASR)
 - [pyannote.audio](https://github.com/pyannote/pyannote-audio)
@@ -581,6 +810,8 @@ Paraformer + FSMN-VAD + fa-zh + 3D-Speaker/CAM++
 ## 研究重点
 
 - 商业基线与本地组合在真实中文会议上的质量、延迟、成本和隐私取舍。
+- 听悟默认、听悟 `fun-asr`、百炼直调和自建 ASR 的语言/方言能力差异。
+- 多语言基础模型、Adapter 与完整微调在目标语言上的收益及非目标语言回归。
 - 复杂多人、远场、短插话、快速轮换和重叠语音。
 - Word 时间戳与 Speaker 区间融合对最终 Speaker Attribution 的影响。
 - 热词、降噪和文本后处理作为独立变量的真实收益与副作用。
@@ -600,6 +831,9 @@ Paraformer + FSMN-VAD + fa-zh + 3D-Speaker/CAM++
 - 实时率RTF。
 - 每音频小时成本。
 - Provider失败和恢复成功率。
+- 每语言/方言 CER/WER、Code-switch 边界准确率和语言混入率。
+- 语言路由准确率、未知语言拒绝率和不支持语言误接受率。
+- 微调目标语言提升、非目标语言回归和模型回滚成功率。
 
 ## 完成标准
 
@@ -607,6 +841,9 @@ Paraformer + FSMN-VAD + fa-zh + 3D-Speaker/CAM++
 - 下游只依赖Canonical，不包含任何Provider字段。
 - 冻结音频 Sample Manifest、文本 Normalization、RTTM/CTM 转换和数据切分版本。
 - `C0`、`L1`、`L2` 在同一 AliMeeting、AISHELL-4 和私有真实黄金集完成评测。
+- 语言能力注册表固定版本，所有生产语言均有 `quality_verified` 证据运行。
+- 至少一个听悟未覆盖或未达标的目标语言/方言完成本地基线；是否微调由误差分析决定。
+- 任何微调版本都有数据 Manifest、基础权重、训练配置、评测报告、许可证和可回滚模型。
 - E1–E5 可以分别替换一个 Provider 并独立运行，不需要启动完整会议产品。
 - 真实多人录音完成 Raw/Normalized CER、DER、JER、cpCER/tcpCER 和时间误差基线。
 - 所有Segment和Word时间合法。
