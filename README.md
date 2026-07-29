@@ -18,8 +18,8 @@ NotaRitmo 是一个面向 Linux、Android、Web 和外部系统的会议 AI 架�
 | 01 | [媒体接入 Media Intake](01-media-intake/README.md) | 把外部输入变成安全、规范、可重复处理的媒体资产 | `MediaAsset` |
 | 02 | [转写还原 Transcript Engine](02-transcript-engine/README.md) | 还原谁在什么时间说了什么 | `TranscriptBundle` |
 | 03 | [单会议理解 Meeting Intelligence](03-meeting-intelligence/README.md) | 从一场会议中提取带证据的语义产物 | `MeetingArtifactBundle` |
-| 04 | [跨会议记忆 Meeting Memory](04-meeting-memory/README.md) | 维护跨会议事实、实体、时态和当前有效状态 | `Claim`、`MemorySnapshot` |
-| 05 | [检索研究 Retrieval / Research](05-retrieval-research/README.md) | 从逐字稿、单会产物和记忆中召回证据并回答问题 | `SearchResult`、`QueryResult` |
+| 04 | [跨会议记忆 Meeting Memory](04-meeting-memory/README.md) | 维护跨会议Observation、实体、状态槽、双时态和当前有效状态 | `MemorySnapshot`、`StateTimeline` |
+| 05 | [检索研究 Retrieval / Research](05-retrieval-research/README.md) | 类型化搜索、证据问答、拒答、引用和异步跨会议研究 | `SearchResult`、`QueryResult`、`ResearchResult` |
 | 06 | [产品与交互 Product Interaction](06-product-interaction/README.md) | 向客户端提供身份、任务、修订、搜索、问答和导出能力 | 稳定产品 API |
 
 ## 技术语言与运行时架构
@@ -140,7 +140,7 @@ Python 模型进程禁止：
 
 - 直接创建产品级 `meeting_id`、`claim_id`、权限或租户关系。
 - 直接修改权威 PostgreSQL 业务表。
-- 自行决定重试、当前有效 Claim、用户可见范围或产品状态。
+- 自行决定重试、当前有效State、用户可见范围或产品状态。
 - 把模型候选未经 Go 校验直接发布为 Transcript、Artifact、Memory 或正式答案。
 - 直接向 Android、Linux 或 Web 客户端提供产品接口。
 - 把完整音频、逐字稿或敏感信息写入普通日志。
@@ -259,7 +259,7 @@ flowchart LR
 - 上游模块不知道下游如何分析、存储或展示。
 - 模块不能直接读取另一个模块的私有表、对象路径、队列或 Provider 原始 JSON。
 - Product 不能直接调用特定 ASR、LLM、向量库或图数据库。
-- Retrieval 不能修改 Transcript、Artifact 或 Claim 的权威状态。
+- Retrieval 不能修改Transcript、Artifact、Observation、Claim或StateVersion的权威状态。
 - Memory 不负责回答自然语言问题，Retrieval 不负责决定什么事实当前有效。
 
 ## 五个横向平台面
@@ -286,7 +286,7 @@ Neo4j 属于数据证据与存储面；LiteLLM 或其他网关属于模型与 Pr
 | 原始与规范化媒体 | 01 | 是 | 原始上传或外部来源 |
 | 逐字稿、时间戳、匿名 Speaker | 02 | 是 | 媒体和 Provider 运行记录 |
 | 摘要、章节、决策、待办等单会产物 | 03 | 是 | 指定版本 Transcript |
-| 实体、Claim、有效期、替代与冲突状态 | 04 | 是 | Artifact、证据和人工确认 |
+| Observation、实体、StateSlot、Claim和双时态StateVersion | 04 | 是 | Artifact、证据和人工确认 |
 | 向量、倒排、图关系候选、缓存 | 04/05 的投影 | 否 | 权威数据 |
 | 会话、任务、权限、反馈和导出记录 | 06 | 是 | 产品操作 |
 
@@ -338,16 +338,19 @@ DeleteMeeting
 GetMedia
 GetTranscript
 GetArtifacts
-GetCurrentClaims
-GetClaimTimeline
+GetCurrentState
+GetStateTimeline
 Search
-Query
+Answer
+StartResearch
+GetResearchRun
 GetCitationPlayback
 GetJob
 ```
 
 读取接口返回面向消费者的只读视图，例如 `TranscriptView`、`ArtifactView`、
-`MemorySnapshot`、`ClaimTimeline`、`SearchResult` 和 `QueryResult`。读取视图不暴露内部表。
+`MemorySnapshot`、`StateTimeline`、`SearchResult`、`QueryResult`和`ResearchResult`。
+读取视图不暴露内部表。
 
 ### 4. 公共基础合同
 
@@ -389,12 +392,14 @@ trace_id
   "end_ms": 195800,
   "quote": "首版我们改成原生 Kotlin。",
   "quote_hash": "sha256:...",
-  "playback_status": "valid"
+  "citation_valid": true,
+  "playback_ready": true
 }
 ```
 
 证据合法条件：资源存在、租户与权限匹配、时间位于媒体范围、原文与指定 Transcript
-版本一致、引用可播放。任一条件失败时，不能把它作为正式答案证据。
+版本一致。`citation_valid`失败时不能把它作为正式答案证据；`playback_ready`只表示当前
+是否能签发和访问短期音频地址，播放服务临时失败不得改变事实证据真假。
 
 ## 一场会议的完整生命周期
 
@@ -418,11 +423,11 @@ sequenceDiagram
     I->>K: MeetingArtifactsReady
     K-->>P: MemoryUpdated
     U->>P: 搜索或提问
-    P->>R: Query + TenantScope
+    P->>R: Search / Answer / Research + 可信身份上下文
     R->>T: 读取逐字稿证据
     R->>I: 读取单会产物
-    R->>K: 读取当前与历史 Claim
-    R-->>P: QueryResult + Citations
+    R->>K: 读取CurrentState与StateTimeline
+    R-->>P: SearchResult / QueryResult / ResearchResult + Citations
     P-->>U: 答案、会议、卡片和可播放引用
 ```
 
@@ -487,10 +492,11 @@ Provider 只能存在于拥有该能力的模块内部：
 | FTS、Embedding、向量库、Reranker、回答模型 | 05 |
 | 身份、通知、任务系统、导出、Webhook | 06 |
 
-Tingwu、本地 Qwen ASR 或其他云 ASR 都是 02 的 Provider；Qwen、OpenAI、Claude 或本地
-模型可以是 03 或 05 的 Provider；Graphiti、Neo4j、Mem0、Hindsight 只能通过 04 的
-统一 Claim 合同参与实验；pgvector 或其他向量库只是 05 的检索投影。替换这些实现不得
-改变客户端 API 和跨模块合同。
+Tingwu、本地Qwen ASR或其他云ASR都是02的Provider；Qwen、OpenAI、Claude或本地模型可以
+是03或05的Provider；Graphiti和Neo4j可在04产生图候选、在05提供只读图检索投影；
+Mem0和Hindsight主要在05作为Agent Memory与端到端检索基线，任何结果都不能绕过04的
+Observation、Claim、StateVersion与证据合同。pgvector或其他向量库只是05的检索投影。
+替换这些实现不得改变客户端API和跨模块合同。
 
 ## 安全、隐私与多租户
 
@@ -519,14 +525,18 @@ Tingwu、本地 Qwen ASR 或其他云 ASR 都是 02 的 Provider；Qwen、OpenAI
 | 01 媒体接入 | 输入格式、安全、转码、质量和存储 | 高，可完全独立评测 | 为某个 ASR 私自改变媒体合同 |
 | 02 转写还原 | ASR、时间、Diarization、Speaker Identity | 高，可直接用标准音频评测 | 把摘要、事实提取或产品身份主档塞进来 |
 | 03 单会议理解 | Prompt、LLM、规则、证据校验和语义 Schema | 高，可用 Transcript Fixture 评测 | 读取其他会议或决定当前有效事实 |
-| 04 跨会议记忆 | 实体归并、Claim、双时态、替代和冲突 | 高，可用有序会议序列评测 | 把向量相似度或图候选直接当权威事实 |
-| 05 检索研究 | 召回、融合、排序、拒答、综合和引用 | 高，可用冻结知识快照评测 | 通过查询结果反写 Transcript、Artifact 或 Claim |
+| 04 跨会议记忆 | Promotion、实体归并、StateSlot、双时态和业务状态 | 高，可用多会议时序评测 | 把向量相似度或图候选直接当权威事实 |
+| 05 检索研究 | 类型化召回、排序、拒答、覆盖、引用和异步研究 | 高，可用冻结知识快照评测 | 通过Answer或Research结果反写上游权威数据 |
 | 06 产品与交互 | 权限、Job、修订、API、客户端和集成 | 中高，可做契约和场景评测 | 变成前五块算法和数据库的万能入口 |
 
 02 和 06 内部功能较多，但仍然具有单一内聚目标：
 
 - 02 的所有子能力共同回答“谁在什么时间说了什么”，应在模块内部拆成 Provider 和流水线，
   不需要升级成新的顶层业务模块。
+- 04内部细分Observation、Entity、StateSlot、Claim、StateVersion和四类业务状态，但它们
+  共同回答“系统应该记住什么、什么当前有效”，不需要拆成新的顶层模块。
+- 05内部细分Online Search/Answer与Async Research，但二者都只读权威数据并回答“如何找到、
+  覆盖、拒答和引用”，Research不是第七模块。
 - 06 是应用层，内部可以继续分为 Identity、Job、Review、Conversation、Export 和
   Integration 子域，但客户端只面对一套稳定产品 API。
 - 04 与 05 必须共同设计测试数据，但必须保持两个状态所有者：04 决定事实，05 只读取和回答。
@@ -544,14 +554,14 @@ Tingwu、本地 Qwen ASR 或其他云 ASR 都是 02 的 Provider；Qwen、OpenAI
 | 01 | 正常、损坏、超长、多声道、不同编码媒体及恶意 URL | 格式、时长、可解码性、质量标签和预期拒绝原因 | `MediaAsset`、质量报告、错误 | 接入率、错误拦截、质量相关性、RTF、资源 |
 | 02 | 规范化音频、语言/人数提示和术语上下文 | 逐字稿、RTTM、重叠区间、词时标、人员标签子集 | `TranscriptBundle` | CER/WER、DER/JER、cpWER/tcpWER、时间误差 |
 | 03 | 人工正确与真实 ASR 噪声两套 Transcript | 摘要、事实、决策、待办、风险和逐项证据 | `MeetingArtifactBundle` | 组件 F1、证据支持、幻觉、成本、延迟 |
-| 04 | 按时间排序的多会议 Artifact、证据和人工修订 | 实体、Claim、有效时间、替代、冲突和当前状态 | `MemorySnapshot`、`ClaimTimeline` | 实体 F1、关系 F1、时态和当前状态准确率 |
-| 05 | 冻结的 Transcript/Artifact/Memory 快照、查询和权限范围 | qrels、目标会议、证据、答案性和期望拒答 | `SearchResult`、`QueryResult` | Recall@K、MRR、nDCG、拒答、回答和引用 |
+| 04 | 多会议Artifact、证据、人工修订、乱序与删除事件 | Observation、实体、StateSlot、Claim、双时态和当前状态 | `MemorySnapshot`、`StateTimeline` | Promotion、实体/关系、时态、乱序收敛和当前状态 |
+| 05 | 冻结的Transcript/Artifact/Memory快照、查询、权限和索引水位 | Meeting/Evidence qrels、Answer Claim、Policy和覆盖 | `SearchResult`、`QueryResult`、`ResearchResult` | Recall、排序、Meeting Set、回答、拒答、覆盖和引用 |
 | 06 | API 命令、事件序列、权限矩阵、断网重试和客户端场景 | 预期响应、状态迁移、可见资源和审计结果 | 产品资源、Job、修订和导出 | 契约、权限、幂等、恢复、端到端完成率 |
 
-03 必须同时跑“人工正确 Transcript”和“真实 ASR Transcript”，才能区分理解模型错误与
-上游识别错误。04 必须输入有时间顺序的多会议序列，不能把互不相关的 Claim 随机堆在一起。
-05 必须包含有答案、无答案、无权限和旧决策被替代的查询。06 的“大量输入”是 API、状态、
-权限和用户场景，而不是音频模型数据。
+03必须同时跑“人工正确Transcript”和“真实ASR Transcript”，才能区分理解模型错误与
+上游识别错误。04使用具有真实业务时间线的多会议序列，并测试同一输入按不同到达顺序是否
+收敛，不能把互不相关的Claim随机堆在一起。05必须包含有答案、无答案、无权限、旧决策替代、
+全集覆盖和部分失败查询。06的“大量输入”是API、状态、权限和用户场景，而不是音频模型数据。
 
 ## 评测体系
 
@@ -562,8 +572,8 @@ Tingwu、本地 Qwen ASR 或其他云 ASR 都是 02 的 Provider；Qwen、OpenAI
 | 01 | 接入成功率、质量检测相关性、转码速度、资源与存储成本 |
 | 02 | CER/WER、DER/JER、SA-WER、词级时间误差、Speaker 身份准确率 |
 | 03 | 摘要覆盖、事实/决策/行动项 F1、证据支持率、幻觉率、成本与延迟 |
-| 04 | 实体归并 F1、替代/冲突识别、当前状态准确率、时态查询准确率 |
-| 05 | Recall@K、MRR、nDCG、会议定位、跨会回答、拒答、引用准确与可播放率 |
+| 04 | Promotion、实体/StateSlot归并、关系、双时态、乱序收敛和当前状态准确率 |
+| 05 | Recall、MRR、nDCG、Meeting Set、Answer Claim、拒答、覆盖、引用和播放SLO |
 | 06 | 上传到结果完成率、首个可用结果时间、修订成功率、权限泄漏数、任务恢复率 |
 
 端到端必须覆盖：
