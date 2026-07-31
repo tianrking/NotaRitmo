@@ -773,11 +773,17 @@ Instruction、Embedding维度、Batch和硬件都进入Run Manifest。
 
 ### Memory与编排框架
 
+- 完整项目清单、Star快照、License、第四模块边界和快速落地架构参见
+  [开源 AI Memory 项目调研与 NotaRitmo 落地选型](../04-meeting-memory/OPEN_SOURCE_MEMORY_RESEARCH.md)。
 - **Hindsight**：以完整Retain/Recall/Reflect系统作为05端到端实验基线，重点对比其语义、
   词法、图、时态召回和Rerank；Reflect输出不是04事实。
 - **Mem0**：对比Agent/用户记忆召回、过滤和图记忆，不承担会议权威状态。
+- **Supermemory**：复用连接器、多模态摄取、用户画像和通用RAG；自动更新与遗忘不能改变04正式事实。
+- **Cognee**：作为图与向量一体化企业知识检索基线，评估其流水线、租户隔离和可观测能力。
 - **Graphiti**：对比图关系、时间和Hybrid Retrieval净增益，读取可重建投影。
+- **GraphRAG**：只用于离线全集主题与跨会议研究，不进入在线当前状态写入链路。
 - **LangGraph**：对比开放式Research子问题规划和迭代工具调用，不掌握权限、预算和运行状态。
+- **Agno / Letta**：属于Agent Runtime和产品壳候选，不作为检索权威或会议事实源。
 - **RAGChecker/Ragas类工具**：只作为生成与检索诊断Provider，LLM Judge分数不是发布真相。
 - **ir_measures**：统一计算qrels上的Recall、MRR、nDCG等确定性IR指标。
 

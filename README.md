@@ -22,6 +22,10 @@ NotaRitmo 是一个面向 Linux、Android、Web 和外部系统的会议 AI 架�
 | 05 | [检索研究 Retrieval / Research](05-retrieval-research/README.md) | 类型化搜索、证据问答、拒答、引用和异步跨会议研究 | `SearchResult`、`QueryResult`、`ResearchResult` |
 | 06 | [产品与交互 Product Interaction](06-product-interaction/README.md) | 向客户端提供身份、任务、修订、搜索、问答和导出能力 | 稳定产品 API |
 
+第04模块的开源复用方案不是从零实现完整Memory平台。15个主流项目的功能、Star、License、
+适用边界、快速上线组合和统一验收方案见
+[开源 AI Memory 项目调研与 NotaRitmo 落地选型](04-meeting-memory/OPEN_SOURCE_MEMORY_RESEARCH.md)。
+
 ## 技术语言与运行时架构
 
 ### 已确定的技术原则

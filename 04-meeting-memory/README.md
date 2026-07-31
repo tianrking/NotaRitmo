@@ -12,6 +12,11 @@
 证据化Artifact维护成可追溯、可纠错、带时间、权限和当前状态的组织记忆。自然语言检索、
 跨会议总结和最终答案属于05模块。
 
+开源 Memory 生态的功能对比、选型结论、快速上线方案和与六个模块的组合方式，参见
+[开源 AI Memory 项目调研与 NotaRitmo 落地选型](OPEN_SOURCE_MEMORY_RESEARCH.md)。调研结论是
+复用一个主 Memory Provider 承接通用能力，由本模块保留一个薄的审核、证据、版本、权限和
+当前状态控制面，而不是从零重写完整 Memory 平台。
+
 本模块区分四类信息：
 
 ```text
@@ -745,16 +750,18 @@ valid/system时间线、ACL结果、删除结果和标注分歧。模型、Promp
 
 ## 实施顺序
 
-1. 冻结Observation、Entity、StateSlot、Claim、StateVersion五类权威对象及四类业务聚合。
-2. 先写标注规范和MeetingMemoryBench，明确建议、观点、决定、行动、风险、问题的边界。
-3. 实现PostgreSQL schema、双时态范围约束、幂等、Outbox、RLS和审计。
-4. 实现确定性的Promotion Policy、Observation导入和证据校验，不接图数据库。
-5. 分别实现Decision、Action、Risk、Question状态机及时间点查询。
-6. 实现可回滚Entity Resolver、StateSlot Resolver、Scope和人工审核。
-7. 以Shadow方式加入规则、Embedding、NLI、LLM关系分类，逐项测净增益。
-8. 完成权限继承、删除传播、乱序导入、并发写入和投影重建故障测试。
-9. 再接Graphiti做候选关系和图遍历A/B测试，达不到净增益即可关闭。
-10. 输出稳定Fixture和授权读取合同给05；Mem0、Hindsight在05与Hybrid RAG对照。
+1. 先按[开源项目调研](OPEN_SOURCE_MEMORY_RESEARCH.md)部署Supermemory与Mem0，用同一批中文会议
+   Smoke Fixture做限时对比，只选择一个主Provider进入快速上线链路。
+2. 跑通“导入会议→候选事实→人工审核→项目搜索”，不等待完整知识图谱和所有状态机。
+3. 冻结Observation、Entity、StateSlot、Claim、StateVersion五类权威对象及四类业务聚合。
+4. 先写标注规范和MeetingMemoryBench，明确建议、观点、决定、行动、风险、问题的边界。
+5. 实现最薄PostgreSQL控制面、幂等、证据、审核、租户隔离和删除传播。
+6. 实现确定性的Promotion Policy、Observation导入和证据校验，不接图数据库。
+7. 分别实现Decision、Action、Risk、Question状态机及时间点查询。
+8. 实现可回滚Entity Resolver、StateSlot Resolver、Scope和人工审核。
+9. 以Shadow方式加入规则、Embedding、NLI、LLM关系分类，逐项测净增益。
+10. 再接Graphiti做候选关系和图遍历A/B测试；Hindsight、GraphRAG和LangGraph留在05对照。
+11. 完成权限继承、乱序导入、并发写入和投影重建故障测试，输出稳定读取合同给05。
 
 ## 完成标准
 
@@ -774,6 +781,8 @@ valid/system时间线、ACL结果、删除结果和标注分歧。模型、Promp
 
 ## 研究参考
 
+- [开源 AI Memory 项目调研与 NotaRitmo 落地选型](OPEN_SOURCE_MEMORY_RESEARCH.md)：15个开源项目、
+  功能分类、模块映射、快速上线组合和统一验收方案。
 - [Graphiti](https://github.com/getzep/graphiti)：时态知识图谱、实体和关系候选。
 - [Mem0](https://github.com/mem0ai/mem0)：Agent与用户记忆摄取、检索和图记忆实验。
 - [Hindsight](https://github.com/vectorize-io/hindsight)：Recall、Reflect和Mental Model实验。
