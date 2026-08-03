@@ -17,8 +17,13 @@ try:
     from engine import Fixture, load_fixture
     from service import MeetingMemoryService
 except ImportError:
-    from ..engine import Fixture, load_fixture  # type: ignore
-    from ..service import MeetingMemoryService  # type: ignore
+    # 直接执行 evaluation/research_quality.py 时补上 baseline 目录。
+    import sys
+    baseline_dir = Path(__file__).resolve().parents[1]
+    if str(baseline_dir) not in sys.path:
+        sys.path.insert(0, str(baseline_dir))
+    from engine import Fixture, load_fixture  # type: ignore
+    from service import MeetingMemoryService  # type: ignore
 
 DEFAULT_KS: Tuple[int, ...] = (1, 3, 5)
 CROSS_MEETING_QUERY_TYPES = {"cross_meeting_change", "cross_meeting_summary"}
