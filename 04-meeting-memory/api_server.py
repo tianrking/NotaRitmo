@@ -551,6 +551,80 @@ class _CrossMeetingSummaryRetriever:
         }
 
 
+class _LocalMeetingExpansionRetriever:
+    """Expand evidence after locating one likely meeting.
+
+    A transcript question often names the topic in one segment and states the
+    required schema/boundary in the next segment.  Pure global top-k drops that
+    second piece.  This adapter first chooses a meeting, then returns its
+    local evidence window.  Security queries get a small configurable lexical
+    hint so tenant/permission terms outrank unrelated equal-score rows.
+    """
+
+    retrieval_mode = "offline_lexical_token_baseline+meeting_local_expansion"
+
+    def __init__(self, base: Any, repository: Any, query_type: str) -> None:
+        self.base = base
+        self.repository = repository
+        self.query_type = query_type
+
+    def retrieve(self, question: str, tenant_id: str, query_type: str, top_k: int = 5) -> dict[str, list[JsonObject]]:
+        visible_segments = self.repository.visible_segments(tenant_id)
+        visible_claims = self.repository.visible_claims(tenant_id)
+        result = self.base.retrieve(
+            question,
+            tenant_id,
+            query_type,
+            max(top_k, len(visible_segments) + len(visible_claims) + 1),
+        )
+        score_fn = getattr(self.base, "score_fn", None)
+        if not callable(score_fn):
+            score_fn = lambda _question, _text: 0.0
+        if self.query_type == "security":
+            hints = ("tenant_id", "tenant", "租户", "权限", "隔离", "泄漏", "删除")
+
+            def score(segment: JsonObject) -> float:
+                text = str(segment.get("text", "")).lower()
+                hint_bonus = 0.2 * sum(1 for hint in hints if hint.lower() in text)
+                return float(score_fn(question, text)) + hint_bonus
+        else:
+
+            def score(segment: JsonObject) -> float:
+                return float(score_fn(question, segment.get("text", "")))
+
+        grouped: dict[str, list[JsonObject]] = {}
+        for segment in visible_segments:
+            grouped.setdefault(str(segment.get("meeting_id", "")), []).append(segment)
+        if not grouped:
+            return result
+        meeting_id = max(
+            grouped,
+            key=lambda current_id: max((score(segment) for segment in grouped[current_id]), default=0.0),
+        )
+        local_rows = [
+            {"score": score(segment), "segment": segment}
+            for segment in grouped[meeting_id]
+        ]
+        local_rows.sort(key=lambda row: row["score"], reverse=True)
+        local_ids = {row["segment"]["segment_id"] for row in local_rows}
+        global_rows = [
+            row for row in result.get("segments", [])
+            if row.get("segment", {}).get("segment_id") not in local_ids
+        ]
+        # Keep the local evidence window intact, then add a few global
+        # candidates for context.  This is bounded by the public top_k.
+        segments = (local_rows + global_rows)[:top_k]
+        claims = [
+            row for row in result.get("claims", [])
+            if row.get("claim", {}).get("source_meeting_id") == meeting_id
+        ]
+        claims.extend(
+            row for row in result.get("claims", [])
+            if row not in claims
+        )
+        return {"segments": segments, "claims": claims[:top_k]}
+
+
 class _PersistentJobStore:
     """Tiny SQLite-backed job/idempotency table independent of repository API."""
 
@@ -847,6 +921,19 @@ class MeetingMemoryApplication:
                     top_k=top_k,
                     repository=self.repository,
                     retriever=_CrossMeetingSummaryRetriever(base_retriever, self.repository),
+                )
+            elif query_type in {"single_meeting", "security"}:
+                answerer = getattr(self.service, "answerer", None)
+                base_retriever = getattr(self.service, "retriever", None)
+                if not callable(getattr(answerer, "answer", None)) or base_retriever is None:
+                    raise APIError(422, f"{query_type} is not supported by the configured answerer")
+                result = answerer.answer(
+                    question,
+                    tenant_id,
+                    query_type,
+                    top_k=top_k,
+                    repository=self.repository,
+                    retriever=_LocalMeetingExpansionRetriever(base_retriever, self.repository, query_type),
                 )
             else:
                 try:
