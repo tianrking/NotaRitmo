@@ -414,6 +414,82 @@ def _aggregate(rows: Sequence[Mapping[str, Any]], ks: Sequence[int]) -> Dict[str
     }
 
 
+
+def recall_at_k(ranked: Sequence[str], expected: Iterable[str], k: int) -> float:
+    """公开的 Recall@K 别名，兼容旧评估脚本。"""
+    return _recall(list(map(str, ranked)), set(map(str, expected)), int(k))
+
+
+def reciprocal_rank(ranked: Sequence[str], expected: Iterable[str]) -> float:
+    """公开的 MRR 单查询别名，兼容旧评估脚本。"""
+    return _mrr(list(map(str, ranked)), set(map(str, expected)))
+
+
+def ndcg_at_k(ranked: Sequence[str], expected: Iterable[str], k: int) -> float:
+    """公开的 nDCG@K 单查询别名，兼容旧评估脚本。"""
+    return _ndcg(list(map(str, ranked)), set(map(str, expected)), int(k))
+
+
+def _synthetic_gold_claims(system: Any, query: Mapping[str, Any]) -> List[Mapping[str, Any]]:
+    """旧 evaluate_store 没有 Fixture 对象时，用证据交集恢复 Gold Claim 键。
+
+    这只用于兼容旧命令入口；新代码应调用 evaluate_fixture 并传入完整
+    gold_claims。不会改变生产存储。
+    """
+    repository = getattr(system, "repository", system)
+    claims = list((getattr(repository, "claims", {}) or {}).values())
+    expected_ids = [str(value) for value in query.get("expected_claims", [])]
+    expected_evidence = set(map(str, query.get("expected_evidence", [])))
+    result: List[Mapping[str, Any]] = []
+    used: set[str] = set()
+    for expected_id in expected_ids:
+        matches = [
+            claim for claim in claims
+            if set(map(str, claim.get("evidence_segment_ids", []))) & expected_evidence
+        ]
+        if not matches:
+            continue
+        candidate = dict(matches[0])
+        candidate["claim_id"] = expected_id
+        result.append(candidate)
+        used.add(expected_id)
+    return result
+
+
+def evaluate_store(
+    system: Any,
+    queries: Sequence[Mapping[str, Any]],
+    *,
+    ks: Sequence[int] = DEFAULT_KS,
+) -> Dict[str, Any]:
+    """旧接口：评估已构建的 Store，返回 summary/queries。
+
+    推荐新入口 evaluate_fixture，它使用完整 Gold Claim 数据并同时报告
+    会议、Claim、证据三类排序。此兼容接口不联网，只复用 system.answer。
+    """
+    rows = [
+        evaluate_query(
+            system,
+            query,
+            gold_claims=_synthetic_gold_claims(system, query),
+            ks=ks,
+        )
+        for query in queries
+    ]
+    summary = _aggregate(rows, ks)
+    summary["meeting_recall_at_k"] = summary["recall_at_k"]["meeting"]
+    summary["evidence_recall_at_k"] = summary["recall_at_k"]["evidence"]
+    summary["tenant_leakage_count"] = sum(
+        1 for row in rows
+        if not _at_path(row, ("tenant_isolation", "leak_free"), False)
+    )
+    state_rows = [row for row in rows if row.get("state_hit") is not None]
+    summary["state_hit_rate"] = _mean(
+        row["state_hit"] for row in state_rows
+        if isinstance(row.get("state_hit"), (int, bool))
+    )
+    return {"summary": summary, "queries": rows, "metrics": summary}
+
 def evaluate_fixture(
     fixture_root: Path,
     *,
