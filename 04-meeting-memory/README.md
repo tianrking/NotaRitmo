@@ -17,6 +17,20 @@
 复用一个主 Memory Provider 承接通用能力，由本模块保留一个薄的审核、证据、版本、权限和
 当前状态控制面，而不是从零重写完整 Memory 平台。
 
+## 当前可运行的研究服务
+
+本目录现在提供一个不依赖第三方包的常驻 HTTP 研究入口：
+`api_server.py`。它接收标准 `TranscriptBundle`，校验租户、时间戳和 ID，返回异步
+`job_id`，由后台 worker 运行当前单会议抽取并写入持久化 SQLite；随后通过
+`/v1/query` 返回会议、Claim、证据时间点、`no_answer` 和 `meeting_scope` 结果。
+这使外部系统可以持续提交新会议并实时查询，而不需要直接访问数据库。
+
+它是用于验证“04/05 中间编排协议”的研究版，不冒充生产 Go/PostgreSQL/Temporal 部署：
+默认 extractor/retriever 是确定性的 fixture-rule/lexical baseline，真实结构化 LLM、
+PostgreSQL、pgvector、reranker 和 Temporal 都通过稳定端口替换。启动、curl 示例、
+租户要求和十场动态验收见 [API_USAGE.md](API_USAGE.md)；跨会议摘要的广度召回只是
+可解释的离线基线，最终生产实现应替换为 Hybrid RAG + 时态 Memory 查询计划器。
+
 ## LLM 提取与规则约束边界
 
 Mem0 的 `infer=true` 可以把输入的 Transcript 或 Artifact 交给配置的 LLM，提取候选

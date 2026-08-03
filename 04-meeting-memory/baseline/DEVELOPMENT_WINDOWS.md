@@ -63,6 +63,14 @@ F:\\crypt_omg 当作本项目的主工作树；它是 Windows 侧的其他工作
 
 默认流程完全离线，不需要 API Key、模型下载、PostgreSQL 或 Docker。
 
+运行研究版常驻 HTTP 服务（外部系统提交 TranscriptBundle 并查询）：
+
+    cd /home/user/meeting-agent-platform/04-meeting-memory
+    python3 api_server.py --host 127.0.0.1 --port 8090 --db ./data/meeting-memory.sqlite3
+
+接口契约、curl 示例、租户参数、重启行为和动态十场 Fixture 验收见
+`../API_USAGE.md`。
+
 ## Windows 原生运行与 WSL 运行的区别
 
 当前 baseline 只使用 Python 标准库，理论上可以复制到 Windows checkout
@@ -86,7 +94,7 @@ WSL2/Docker 的服务环境；Windows 原生 Python 只作为兼容性检查，�
 - MeetingMemoryService 的 Extractor、Repository、Retriever、Answerer、LLMProvider
   注入边界。
 - modular 与 legacy runner 的输出计数和指标一致。
-- 当前完整 baseline 测试全部通过（17 tests）。
+- 当前模块完整回归测试全部通过（36 tests，包含 HTTP 异步/幂等/租户/重启测试）。
 - 离线评测指标：no-answer accuracy 1.0、平均会议召回 0.9236、平均证据召回
   0.9167。
 
@@ -94,7 +102,8 @@ WSL2/Docker 的服务环境；Windows 原生 Python 只作为兼容性检查，�
 
 - 真实 SaaS LLM 质量、费用和网络重试。
 - PostgreSQL/pgvector 持久化、并发和数据库级租户 RLS。
-- MinIO 音频播放链路、HTTP API、Docker Compose 和生产部署。
+- MinIO 音频播放链路、生产 Go API、Docker Compose 和生产部署；当前提供的是
+  Python 标准库研究版 HTTP API，不等同于生产服务。
 - 真实 ASR 输出的噪声、说话人漂移和时间戳误差。
 
 因此 WSL/Windows 说明只解决开发入口；核心项目的生产依赖仍需按后续模块

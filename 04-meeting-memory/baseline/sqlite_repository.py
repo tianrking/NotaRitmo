@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from threading import RLock
 from copy import deepcopy
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Dict, Sequence
 
 
-Json = dict[str, Any]
+Json = Dict[str, Any]
 
 
 class SQLiteRepository:
@@ -24,14 +25,19 @@ class SQLiteRepository:
         self.path = str(path)
         if self.path != ":memory:":
             Path(self.path).parent.mkdir(parents=True, exist_ok=True)
-        self.connection = sqlite3.connect(self.path)
+        # The research HTTP entry point has a worker thread and request
+        # threads.  Repository operations are serialized by this re-entrant
+        # lock; check_same_thread is disabled only for this local adapter.
+        self._lock = RLock()
+        self.connection = sqlite3.connect(self.path, check_same_thread=False)
         self.connection.row_factory = sqlite3.Row
         self.connection.execute("PRAGMA foreign_keys = ON")
         self._create_schema()
 
     def _create_schema(self) -> None:
-        self.connection.executescript(
-            """
+        with self._lock:
+            self.connection.executescript(
+                """
             CREATE TABLE IF NOT EXISTS meetings (
                 meeting_id TEXT PRIMARY KEY,
                 tenant_id TEXT NOT NULL,
@@ -62,9 +68,9 @@ class SQLiteRepository:
             CREATE INDEX IF NOT EXISTS idx_segments_tenant ON segments(tenant_id);
             CREATE INDEX IF NOT EXISTS idx_claims_tenant_key
               ON claims(tenant_id, subject, predicate);
-            """
-        )
-        self.connection.commit()
+                """
+            )
+            self.connection.commit()
 
     @staticmethod
     def _encode(value: Json) -> str:
@@ -79,31 +85,35 @@ class SQLiteRepository:
 
     @property
     def meetings(self) -> dict[str, Json]:
-        return {
-            row["meeting_id"]: self._decode(row["payload"])
-            for row in self.connection.execute("SELECT meeting_id, payload FROM meetings")
-        }
+        with self._lock:
+            return {
+                row["meeting_id"]: self._decode(row["payload"])
+                for row in self.connection.execute("SELECT meeting_id, payload FROM meetings")
+            }
 
     @property
     def segments(self) -> dict[str, Json]:
-        return {
-            row["segment_id"]: self._decode(row["payload"])
-            for row in self.connection.execute("SELECT segment_id, payload FROM segments")
-        }
+        with self._lock:
+            return {
+                row["segment_id"]: self._decode(row["payload"])
+                for row in self.connection.execute("SELECT segment_id, payload FROM segments")
+            }
 
     @property
     def artifacts(self) -> dict[str, Json]:
-        return {
-            row["meeting_id"]: self._decode(row["payload"])
-            for row in self.connection.execute("SELECT meeting_id, payload FROM artifacts")
-        }
+        with self._lock:
+            return {
+                row["meeting_id"]: self._decode(row["payload"])
+                for row in self.connection.execute("SELECT meeting_id, payload FROM artifacts")
+            }
 
     @property
     def claims(self) -> dict[str, Json]:
-        return {
-            row["claim_id"]: self._decode(row["payload"])
-            for row in self.connection.execute("SELECT claim_id, payload FROM claims")
-        }
+        with self._lock:
+            return {
+                row["claim_id"]: self._decode(row["payload"])
+                for row in self.connection.execute("SELECT claim_id, payload FROM claims")
+            }
 
     def ingest_meeting(
         self,
@@ -114,28 +124,29 @@ class SQLiteRepository:
     ) -> Json:
         if extractor is None:
             raise ValueError("SQLiteRepository.ingest_meeting requires an extractor")
-        artifact = extractor.extract(meeting, list(segments))
-        with self.connection:
-            self.connection.execute(
-                "INSERT OR REPLACE INTO meetings(meeting_id, tenant_id, payload) VALUES (?, ?, ?)",
-                (meeting["meeting_id"], meeting["tenant_id"], self._encode(meeting)),
-            )
-            for segment in segments:
+        with self._lock:
+            artifact = extractor.extract(meeting, list(segments))
+            with self.connection:
                 self.connection.execute(
-                    "INSERT OR REPLACE INTO segments(segment_id, meeting_id, tenant_id, payload) VALUES (?, ?, ?, ?)",
-                    (
-                        segment["segment_id"],
-                        segment["meeting_id"],
-                        segment["tenant_id"],
-                        self._encode(segment),
-                    ),
+                    "INSERT OR REPLACE INTO meetings(meeting_id, tenant_id, payload) VALUES (?, ?, ?)",
+                    (meeting["meeting_id"], meeting["tenant_id"], self._encode(meeting)),
                 )
-            self.connection.execute(
-                "INSERT OR REPLACE INTO artifacts(meeting_id, tenant_id, payload) VALUES (?, ?, ?)",
-                (artifact["meeting_id"], artifact["tenant_id"], self._encode(artifact)),
-            )
-            for claim in artifact.get("claims", []):
-                self._upsert_claim(claim)
+                for segment in segments:
+                    self.connection.execute(
+                        "INSERT OR REPLACE INTO segments(segment_id, meeting_id, tenant_id, payload) VALUES (?, ?, ?, ?)",
+                        (
+                            segment["segment_id"],
+                            segment["meeting_id"],
+                            segment["tenant_id"],
+                            self._encode(segment),
+                        ),
+                    )
+                self.connection.execute(
+                    "INSERT OR REPLACE INTO artifacts(meeting_id, tenant_id, payload) VALUES (?, ?, ?)",
+                    (artifact["meeting_id"], artifact["tenant_id"], self._encode(artifact)),
+                )
+                for claim in artifact.get("claims", []):
+                    self._upsert_claim(claim)
         return artifact
 
     def _upsert_claim(self, claim: Json) -> None:
@@ -175,33 +186,38 @@ class SQLiteRepository:
         )
 
     def upsert_claim(self, claim: Json) -> None:
-        with self.connection:
-            self._upsert_claim(claim)
+        with self._lock:
+            with self.connection:
+                self._upsert_claim(claim)
 
     def visible_segments(self, tenant_id: str) -> list[Json]:
-        return [
-            self._decode(row["payload"])
-            for row in self.connection.execute(
-                "SELECT payload FROM segments WHERE tenant_id = ?", (tenant_id,)
-            )
-        ]
+        with self._lock:
+            return [
+                self._decode(row["payload"])
+                for row in self.connection.execute(
+                    "SELECT payload FROM segments WHERE tenant_id = ?", (tenant_id,)
+                )
+            ]
 
     def visible_claims(self, tenant_id: str) -> list[Json]:
-        return [
-            self._decode(row["payload"])
-            for row in self.connection.execute(
-                "SELECT payload FROM claims WHERE tenant_id = ?", (tenant_id,)
-            )
-        ]
+        with self._lock:
+            return [
+                self._decode(row["payload"])
+                for row in self.connection.execute(
+                    "SELECT payload FROM claims WHERE tenant_id = ?", (tenant_id,)
+                )
+            ]
 
     def get_segment(self, segment_id: str) -> Json | None:
-        row = self.connection.execute(
-            "SELECT payload FROM segments WHERE segment_id = ?", (segment_id,)
-        ).fetchone()
-        return self._decode(row["payload"]) if row else None
+        with self._lock:
+            row = self.connection.execute(
+                "SELECT payload FROM segments WHERE segment_id = ?", (segment_id,)
+            ).fetchone()
+            return self._decode(row["payload"]) if row else None
 
     def close(self) -> None:
-        self.connection.close()
+        with self._lock:
+            self.connection.close()
 
     def __enter__(self) -> "SQLiteRepository":
         return self

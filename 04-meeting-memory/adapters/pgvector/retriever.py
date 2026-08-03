@@ -8,10 +8,10 @@ from __future__ import annotations
 
 import json
 from contextlib import contextmanager
-from typing import Any, Callable, Iterator, Mapping, Protocol, Sequence
+from typing import Any, Callable, Dict, Iterator, Mapping, Protocol, Sequence
 
 
-Json = dict[str, Any]
+Json = Dict[str, Any]
 ConnectionFactory = Callable[[str], Any]
 
 

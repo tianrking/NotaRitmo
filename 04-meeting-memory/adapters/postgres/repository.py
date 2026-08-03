@@ -12,10 +12,10 @@ import json
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Iterator, Mapping, Sequence
+from typing import Any, Callable, Dict, Iterator, Mapping, Sequence
 
 
-Json = dict[str, Any]
+Json = Dict[str, Any]
 ConnectionFactory = Callable[[str], Any]
 
 
