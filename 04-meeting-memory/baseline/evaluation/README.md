@@ -6,6 +6,12 @@
 
 ## 当前实现
 
+> Provider 唯一实现位于仓库顶层的
+> [`llm-providers/`](../../../llm-providers/README.md)。本目录的
+> `provider.py` 是旧评估器的临时兼容模块，仅为既有测试保留，禁止在其中新增
+> SaaS、协议或重试实现。新的 03/04/05 编排（包括 `run_llm_loop.py`）必须直接
+> 导入顶层 `llm_providers`。
+
 - `LLMProvider`：唯一需要被会议编排依赖的接口，方法是 `complete_json(request)`。
 - `OpenAICompatibleProvider`：仅使用 Python 标准库调用兼容
   `POST /chat/completions` 的 SaaS 或自建服务，不依赖 SDK。

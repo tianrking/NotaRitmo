@@ -1,4 +1,13 @@
-"""模型无关的结构化 LLM Provider 接口。
+"""LEGACY COMPATIBILITY MODULE — do not add new Provider implementations here.
+
+The canonical Provider contracts and HTTP adapters now live in the top-level
+``llm-providers/llm_providers`` package.  The classes below remain temporarily
+for the original 04 evaluation imports and regression fixtures.  New 03/04/05
+code, including ``run_llm_loop.py``, must import ``llm_providers`` directly.
+This module is intentionally marked legacy so it can be removed after the
+existing baseline evaluator is migrated without changing its public test names.
+
+模型无关的结构化 LLM Provider 接口。
 
 设计原则：
 

@@ -9,7 +9,7 @@ NotaRitmo 是一个面向 Linux、Android、Web 和外部系统的会议 AI 架�
 > 输入音频、视频或标准转写，输出逐字稿、说话人、摘要、章节、议题、事实、决策、
 > 行动项、风险、开放问题、热词、词云、图谱、跨会议记忆、研究答案和可播放证据。
 
-当前仓库只定义架构、合同、功能范围和验收标准，不包含业务代码、部署配置或既有系统实现。
+当前仓库以架构、合同、功能范围和验收标准为主；04 跨会议记忆已包含可运行的 Python 研究基线、固定 Fixture 和可插拔适配器，其他模块仍主要是合同与文档，尚不代表完整生产部署或既有系统实现。
 
 ## 六个业务模块
 
@@ -21,6 +21,12 @@ NotaRitmo 是一个面向 Linux、Android、Web 和外部系统的会议 AI 架�
 | 04 | [跨会议记忆 Meeting Memory](04-meeting-memory/README.md) | 维护跨会议Observation、实体、状态槽、双时态和当前有效状态 | `MemorySnapshot`、`StateTimeline` |
 | 05 | [检索研究 Retrieval / Research](05-retrieval-research/README.md) | 类型化搜索、证据问答、拒答、引用和异步跨会议研究 | `SearchResult`、`QueryResult`、`ResearchResult` |
 | 06 | [产品与交互 Product Interaction](06-product-interaction/README.md) | 向客户端提供身份、任务、修订、搜索、问答和导出能力 | 稳定产品 API |
+
+## 横向 LLM Provider 基础设施
+
+[llm-providers](llm-providers/README.md) 是跨 03 单会议理解、04 跨会议记忆和 05 检索研究复用的 Provider 适配层，不是第七个业务模块。它统一封装离线 Fixture、OpenAI-compatible 和 Anthropic-compatible（包括 BigModel 路由）的请求、响应、版本、输入哈希、Token/成本、延迟、超时、重试和脱敏元数据。
+
+Provider 只返回模型候选；03/04/05 仍分别拥有证据校验、Claim 状态、权限、租户隔离、no-answer 和 PostgreSQL 权威写入。默认运行是离线、无网络、无密钥模式。真实 SaaS 凭证只能通过运行时环境变量注入，不能写入 README、Fixture、日志或 Git。
 
 第04模块的开源复用方案不是从零实现完整Memory平台。15个主流项目的功能、Star、License、
 适用边界、快速上线组合和统一验收方案见
