@@ -54,6 +54,22 @@ Inflection Pi 是闭源产品，不是可直接 Fork 的 Memory 服务。一些�
 
 候选：Mem0、Supermemory、MemOS、Memobase。
 
+#### Mem0 的提取不是硬规则引擎
+
+Mem0 的典型 `infer=true` 流程是由 LLM 从输入消息中提取候选 Memory，再交给 Embedding、向量
+存储和检索组件；`infer=false` 只保存调用方已经准备好的内容。自定义 Prompt 或
+`custom_instructions` 只能构成软约束，不能保证字段完整、证据存在、时间正确或“建议”和
+“正式决定”永不混淆。
+
+在 NotaRitmo 中，Mem0 的 LLM 提取结果必须被视为 `CandidateClaim`：先经过 Schema 校验、
+证据坐标校验、租户/权限校验、幂等检查和 Promotion Policy，再由 Go Memory Service 写入
+PostgreSQL 的 Observation、Claim 和 StateVersion。只有 PostgreSQL 的审核状态和当前状态视图
+可以对外作为正式会议事实。
+
+因此 Mem0 适合复用通用的 Memory Formation、Embedding、Recall 和 CRUD，但不应替代会议专用的
+证据合同、Decision/Action/Risk/Question 状态机、双时态版本和数据库硬约束。原始转写、模型
+版本、Prompt 版本和候选输出必须保留，以便用更强 LLM 重跑并比较，不得静默覆盖权威事实。
+
 它们适合复用：
 
 - 内容摄取和标准化。

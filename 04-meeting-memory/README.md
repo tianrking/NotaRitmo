@@ -17,6 +17,44 @@
 复用一个主 Memory Provider 承接通用能力，由本模块保留一个薄的审核、证据、版本、权限和
 当前状态控制面，而不是从零重写完整 Memory 平台。
 
+## LLM 提取与规则约束边界
+
+Mem0 的 `infer=true` 可以把输入的 Transcript 或 Artifact 交给配置的 LLM，提取候选
+Memory，再进行 Embedding、向量存储和召回；`infer=false` 则绕过生成式 LLM，直接保存调用方
+提供的文本或 Claim。这里的“提取”是记忆形成，不是 ASR，也不是完整会议摘要。
+
+必须明确：Mem0 的自定义 Prompt、`custom_instructions` 和模型输出格式属于**软约束**。它们能
+引导模型提取“正式决定、行动项、负责人、截止时间和风险”，但不能像数据库约束或编译器一样
+保证每次都遵守。LLM 仍可能漏提、误归类、丢失时间点或把建议写成事实；不同模型、版本和
+上下文长度也会改变结果。
+
+因此本模块禁止把 Mem0 或任意 LLM 的输出直接写入当前有效状态。正式流程必须是：
+
+```text
+Transcript / MeetingArtifactBundle
+  -> LLM 结构化抽取
+  -> CandidateClaim / CandidateState
+  -> Schema、字段、租户和证据校验
+  -> 人工审核或明确 Promotion Policy
+  -> PostgreSQL Observation / Claim / StateVersion
+  -> Mem0、pgvector、FTS、Graphiti 等可重建投影
+```
+
+硬约束由 Go + PostgreSQL 实现，而不是由 Prompt 承担：
+
+- Schema、枚举、必填字段、时间区间和 `evidence_id` 合法性。
+- `tenant_id`、来源权限、删除传播和按用户授权。
+- `source_key/claim_id` 幂等、唯一约束和并发版本。
+- `supports`、`supersedes`、`contradicts` 的时间与 Scope 规则。
+- 当前状态快照、历史时间线、审核状态和回滚。
+
+没有证据的模型输出只能进入候选或人工队列；不能进入 `MemorySnapshot`。更换 LLM 或重新运行
+提取时，原始 Transcript、Artifact 和已审核 Claim 必须保留，不能把模型重跑当成事实覆盖。
+
+这意味着 Memory Formation 和 Memory Retrieval 必须分开评测：前者测 LLM 按 Schema 提取事实
+的质量，后者在固定 Gold Claim 上测召回、过滤、时态和删除。Mem0 可以关闭、替换或从
+PostgreSQL 权威数据重建，不是本模块的事实权威。
+
 本模块区分四类信息：
 
 ```text
